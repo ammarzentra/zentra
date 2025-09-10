@@ -1,168 +1,141 @@
 import streamlit as st
-import os
 from openai import OpenAI
-import PyPDF2
-import docx2txt
-from io import BytesIO
+import fitz  # PyMuPDF
+import docx
 from fpdf import FPDF
+import io
 
-# ============== CONFIG ==============
-st.set_page_config(
-    page_title="Zentra — AI Study Buddy",
-    page_icon="⚡",
-    layout="wide",
-)
-
-# ============== STYLE ==============
-hide_streamlit_style = """
-    <style>
-    #MainMenu {visibility: hidden;}
-    footer {visibility: hidden;}
-    header {visibility: hidden;}
-    .stAppDeployButton {display:none;}
-    .viewerBadge_link__qRIco {display:none;}
-    .st-emotion-cache-12fmjuu {display:none;}
-    </style>
-"""
-st.markdown(hide_streamlit_style, unsafe_allow_html=True)
-
-gradient = """
-    <style>
-    .hero {
-        padding: 1.5rem;
-        border-radius: 12px;
-        background: linear-gradient(90deg, #7B2FF7 0%, #00C9FF 100%);
-        text-align: center;
-        color: white;
-    }
-    .hero h1 { font-size: 2rem; font-weight: bold; }
-    .hero p { font-size: 1rem; margin-top: -10px; }
-    .chat-button {
-        position: fixed;
-        bottom: 20px; right: 20px;
-        background: #7B2FF7;
-        color: white; border-radius: 50px;
-        padding: 12px 20px;
-        font-weight: bold; cursor: pointer;
-    }
-    </style>
-"""
-st.markdown(gradient, unsafe_allow_html=True)
-
-# ============== OPENAI CLIENT ==============
+# ===================== SETUP =====================
+st.set_page_config(page_title="⚡ Zentra — AI Study Buddy", layout="wide")
 client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
+MODEL = "gpt-4o-mini"
 
-# ============== FUNCTIONS ==============
+# ===================== CUSTOM CSS =====================
+st.markdown("""
+    <style>
+        #MainMenu {visibility: hidden;}
+        footer {visibility: hidden;}
+        header {visibility: hidden;}
+
+        .zentra-header {
+            background: linear-gradient(90deg, #6a11cb, #2575fc);
+            padding: 25px;
+            border-radius: 12px;
+            text-align: center;
+            color: white;
+        }
+        .zentra-header h1 { font-size: 38px; margin: 0; }
+        .zentra-header p { font-size: 16px; margin-top: 8px; opacity: 0.9; }
+        .stButton>button { width: 100%; border-radius: 8px; font-weight: 600; padding: 10px; }
+        .tooltip { font-size: 13px; color: #aaa; margin-top: -8px; margin-bottom: 12px; }
+    </style>
+""", unsafe_allow_html=True)
+
+# ===================== HEADER =====================
+st.markdown("""
+    <div class="zentra-header">
+        <h1>⚡ Zentra — AI Study Buddy</h1>
+        <p>Upload notes → Get summaries, flashcards, quizzes & exams. Plus your own AI tutor.</p>
+    </div>
+""", unsafe_allow_html=True)
+
+# ===================== SIDEBAR =====================
+st.sidebar.title("📌 About Zentra")
+st.sidebar.info("""
+Zentra helps students learn smarter:
+- 📑 Summaries → exam-ready notes  
+- 🃏 Flashcards → spaced recall  
+- 🎯 Quizzes → adaptive MCQs  
+- 📝 Mock Exams → multi-format tests with marking  
+- 🤖 Ask Zentra → your AI tutor  
+""")
+
+st.sidebar.markdown("---")
+st.sidebar.subheader("📊 Progress")
+st.sidebar.text("Quizzes: 0")
+st.sidebar.text("Mock Exams: 0")
+
+# ===================== FILE UPLOAD =====================
+st.subheader("📂 Upload your notes (PDF / DOCX / TXT) or paste below")
+uploaded_file = st.file_uploader("Upload file", type=["pdf", "docx", "txt"])
+notes_text = st.text_area("Or paste your notes here…", height=150)
+
 def extract_text(file):
+    text = ""
     if file.name.endswith(".pdf"):
-        pdf_reader = PyPDF2.PdfReader(file)
-        text = ""
-        for page in pdf_reader.pages:
-            text += page.extract_text() or ""
-        return text
+        pdf = fitz.open(stream=file.read(), filetype="pdf")
+        for page in pdf:
+            text += page.get_text()
     elif file.name.endswith(".docx"):
-        return docx2txt.process(file)
-    elif file.name.endswith(".txt"):
-        return file.read().decode("utf-8")
+        doc = docx.Document(file)
+        for para in doc.paragraphs:
+            text += para.text + "\n"
     else:
-        return ""
+        text = file.read().decode("utf-8")
+    return text
 
-def save_as_pdf(text, title):
-    pdf = FPDF()
-    pdf.add_page()
-    pdf.set_font("Arial", size=12)
-    for line in text.split("\n"):
-        pdf.multi_cell(0, 10, line)
-    buffer = BytesIO()
-    pdf.output(buffer, 'F')
-    return buffer.getvalue()
+if uploaded_file:
+    notes_text = extract_text(uploaded_file)
 
-def ask_openai(prompt, notes):
+# ===================== HELPERS =====================
+def ask_openai(prompt):
     resp = client.chat.completions.create(
-        model="gpt-4o-mini",
+        model=MODEL,
         messages=[
-            {"role":"system","content":prompt},
-            {"role":"user","content":notes}
+            {"role": "system", "content": "You are Zentra, a professional AI study assistant."},
+            {"role": "user", "content": prompt}
         ]
     )
     return resp.choices[0].message.content
 
-# ============== SIDEBAR ==============
-with st.sidebar:
-    st.subheader("📊 Progress")
-    st.metric("Quizzes", 0)
-    st.metric("Mock Exams", 0)
+def save_as_pdf(content, title="Zentra Output"):
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_font("Arial", size=12)
+    pdf.multi_cell(0, 10, content)
+    return pdf.output(dest="S").encode("latin-1")
 
-    st.subheader("⚡ About Zentra")
-    st.caption("AI-powered study buddy → Summaries, flashcards, quizzes, and exams.")
+# ===================== TOOLS =====================
+st.subheader("✨ Study Tools")
 
-    st.subheader("🔑 What each tool does")
-    st.markdown("""
-    - **Summaries** → Exam-ready notes  
-    - **Flashcards** → Spaced-recall Qs  
-    - **Quizzes** → MCQs w/ answers  
-    - **Mock Exams** → Full exams w/ marking  
-    - **Ask Zentra** → Your study tutor  
-    """)
-
-# ============== HERO HEADER ==============
-st.markdown("""
-<div class="hero">
-    <h1>⚡ Zentra — AI Study Buddy</h1>
-    <p>Upload notes → Get summaries, flashcards, quizzes, and mock exams.</p>
-</div>
-""", unsafe_allow_html=True)
-
-# ============== FILE UPLOAD ==============
-st.subheader("📥 Upload your notes")
-uploaded_file = st.file_uploader("Upload PDF / DOCX / TXT", type=["pdf","docx","txt"])
-
-notes = ""
-if uploaded_file:
-    notes = extract_text(uploaded_file)
-
-manual_text = st.text_area("✍️ Or paste notes here…")
-if manual_text.strip():
-    notes = manual_text
-
-# ============== FEATURES ==============
-st.subheader("📌 What do you need?")
 col1, col2, col3, col4, col5 = st.columns(5)
 
 with col1:
-    if st.button("📄 Summaries") and notes:
-        summary = ask_openai("Summarize clearly in bullet points", notes)
-        st.success(summary)
-        st.download_button("⬇️ Download Summary", save_as_pdf(summary,"Summary"), file_name="summary.pdf")
+    if st.button("📑 Summaries") and notes_text.strip():
+        summary = ask_openai(f"Summarize clearly in exam-style bullet points:\n{text}")
+        st.success("✅ Summary Generated")
+        st.write(summary)
+        st.download_button("⬇️ Download PDF", save_as_pdf(summary), file_name="summary.pdf")
 
 with col2:
-    if st.button("🃏 Flashcards") and notes:
-        flash = ask_openai("Create detailed Q&A flashcards", notes)
-        st.success(flash)
-        st.download_button("⬇️ Download Flashcards", save_as_pdf(flash,"Flashcards"), file_name="flashcards.pdf")
+    if st.button("🃏 Flashcards") and notes_text.strip():
+        cards = ask_openai(f"Make flashcards (Q front, A back). Cover all key topics:\n{notes_text}")
+        st.success("✅ Flashcards Generated")
+        st.write(cards)
+        st.download_button("⬇️ Download PDF", save_as_pdf(cards), file_name="flashcards.pdf")
 
 with col3:
-    if st.button("🎯 Quizzes") and notes:
-        quiz = ask_openai("Generate adaptive MCQs with answers", notes)
-        st.success(quiz)
-        st.download_button("⬇️ Download Quiz", save_as_pdf(quiz,"Quiz"), file_name="quiz.pdf")
+    if st.button("🎯 Quizzes") and notes_text.strip():
+        quiz = ask_openai(f"Generate adaptive MCQs (3-4 options each + answers):\n{notes_text}")
+        st.success("✅ Quiz Generated")
+        st.write(quiz)
+        st.download_button("⬇️ Download PDF", save_as_pdf(quiz), file_name="quiz.pdf")
 
 with col4:
-    if st.button("📝 Mock Exams") and notes:
-        exam = ask_openai("Generate a full mock exam with MCQs, short and long Qs, with marks", notes)
-        st.success(exam)
-        st.download_button("⬇️ Download Mock Exam", save_as_pdf(exam,"MockExam"), file_name="mock_exam.pdf")
+    if st.button("📝 Mock Exams") and notes_text.strip():
+        exam = ask_openai(f"Create a full mock exam with MCQs, short answers, and essay Qs. Mark it:\n{notes_text}")
+        st.success("✅ Mock Exam Generated")
+        st.write(exam)
+        st.download_button("⬇️ Download PDF", save_as_pdf(exam), file_name="mock_exam.pdf")
 
 with col5:
-    st.markdown('<div id="chat-launch" class="chat-button">💬 Ask Zentra</div>', unsafe_allow_html=True)
+    if st.button("💬 Ask Zentra"):
+        st.session_state["chat_open"] = True
 
-# ============== CHAT POPUP ==============
-if "chat_open" not in st.session_state:
-    st.session_state.chat_open = False
-
-if st.session_state.chat_open or st.button("💬 Open Chat"):
-    st.subheader("💬 Ask Zentra (Study Tutor)")
-    user_q = st.text_input("Ask a question:")
-    if user_q:
-        ans = ask_openai("You are Zentra, a study tutor.", user_q)
-        st.info(ans)
+# ===================== ASK ZENTRA CHAT =====================
+if "chat_open" in st.session_state and st.session_state["chat_open"]:
+    st.markdown("### 💬 Ask Zentra")
+    user_q = st.text_input("Type your question:")
+    if st.button("Send") and user_q:
+        ans = ask_openai(user_q)
+        st.markdown(f"**Zentra:** {ans}")
