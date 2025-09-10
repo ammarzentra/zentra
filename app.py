@@ -1,182 +1,186 @@
-# app.py — Zentra (Phase 2 Ready)
+# app.py — Zentra (Final Polished Version)
 
-import io, os, base64, sqlite3
-from typing import List, Tuple
+import io
+import os
+import base64
 import streamlit as st
 from openai import OpenAI
-from pypdf import PdfReader
 
-# ---------- SETUP ----------
+# ---------- PAGE SETUP ----------
 st.set_page_config(page_title="Zentra — AI Study Buddy", page_icon="⚡", layout="wide")
 
-# ---------- DB INIT ----------
-def init_db():
-    conn = sqlite3.connect("zentra.db")
-    cur = conn.cursor()
-    cur.execute("""CREATE TABLE IF NOT EXISTS history (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        type TEXT,
-        title TEXT,
-        score TEXT,
-        feedback TEXT
-    )""")
-    conn.commit()
-    return conn
-conn = init_db()
+# Hide Streamlit chrome (toolbar, footer, watermark)
+st.markdown("""
+<style>
+[data-testid="stToolbar"], [data-testid="stDecoration"], header {visibility: hidden; height:0;}
+footer {visibility:hidden;}
+a[class*="viewerBadge"], div[class*="viewerBadge"], #ViewerBadgeContainer {display:none !important;}
 
-def save_history(kind, title, score, feedback):
-    cur = conn.cursor()
-    cur.execute("INSERT INTO history (type,title,score,feedback) VALUES (?,?,?,?)",
-                (kind, title, score, feedback))
-    conn.commit()
+.block-container {padding-top:1rem; max-width:1200px;}
+.hero {background:linear-gradient(90deg,#6a11cb 0%,#2575fc 100%); padding:22px; border-radius:14px; color:#fff;}
+.hero h1 {margin:0; font-size:34px;}
+.hero p {margin:0; opacity:.9;}
 
-def load_history():
-    cur = conn.cursor()
-    cur.execute("SELECT type,title,score,feedback FROM history ORDER BY id DESC LIMIT 10")
-    return cur.fetchall()
+.tool-btn {display:inline-block; padding:10px 16px; margin:10px 10px 0 0;
+           border-radius:12px; background:#111; color:#fff; border:1px solid #333;}
+.tool-btn:hover {background:#1b1b1b;}
 
-# ---------- OPENAI ----------
-def get_client():
-    os.environ["OPENAI_API_KEY"] = st.secrets["OPENAI_API_KEY"]
+#ask-bubble {position:fixed; right:26px; top:26px; z-index:999;}
+.ask-panel {position:fixed; right:26px; top:86px; width:min(420px,92vw); height:70vh;
+            background:#0e1117; border:1px solid #333; border-radius:14px; 
+            box-shadow:0 10px 30px rgba(0,0,0,.45); z-index:9999;}
+.ask-header {display:flex; justify-content:space-between; align-items:center; 
+             padding:10px 14px; border-bottom:1px solid #222;}
+.ask-body {padding:12px; height:calc(70vh - 120px); overflow-y:auto;}
+.ask-input {position:absolute; bottom:12px; left:12px; right:12px;}
+</style>
+""", unsafe_allow_html=True)
+
+# ---------- STATE ----------
+if "history_quiz" not in st.session_state: st.session_state.history_quiz = []
+if "history_mock" not in st.session_state: st.session_state.history_mock = []
+if "show_chat" not in st.session_state: st.session_state.show_chat = False
+if "chat" not in st.session_state: st.session_state.chat = []
+if "notes_text" not in st.session_state: st.session_state.notes_text = ""
+
+# ---------- OPENAI CLIENT ----------
+def get_client() -> OpenAI:
+    key = st.secrets.get("OPENAI_API_KEY")
+    if not key: st.stop()
+    os.environ["OPENAI_API_KEY"] = key
     return OpenAI()
 
 MODEL_TEXT = "gpt-4o-mini"
-MODEL_VISION = "gpt-4o-mini"
 
-def ask_openai(prompt, system="You are Zentra, a study tutor. Be concise and supportive."):
+def ask_openai(prompt: str, system="You are Zentra, an academic study tutor."):
     client = get_client()
     resp = client.chat.completions.create(
         model=MODEL_TEXT,
-        messages=[{"role":"system","content":system},{"role":"user","content":prompt}]
+        messages=[{"role":"system","content":system},{"role":"user","content":prompt}],
+        temperature=0.4,
     )
     return resp.choices[0].message.content.strip()
 
-def ask_openai_vision(question, images, text_hint):
-    client = get_client()
-    parts=[{"type":"text","text":f"{question}\nNotes hint:\n{text_hint}"}]
-    for fname,b in images[:2]:
-        b64=base64.b64encode(b).decode()
-        mime="image/png" if fname.endswith("png") else "image/jpeg"
-        parts.append({"type":"image_url","image_url":{"url":f"data:{mime};base64,{b64}"}})
-    resp=client.chat.completions.create(model=MODEL_VISION,messages=[{"role":"user","content":parts}])
-    return resp.choices[0].message.content.strip()
-
-# ---------- FILE HANDLING ----------
-def read_file(uploaded) -> Tuple[str, List[Tuple[str, bytes]]]:
-    if not uploaded: return "", []
-    name = uploaded.name.lower(); data = uploaded.read()
-    text, images = "", []
-    if name.endswith(".txt"):
-        text = data.decode("utf-8","ignore")
-    elif name.endswith(".pdf"):
-        try:
-            reader=PdfReader(io.BytesIO(data))
-            pages=[p.extract_text() or "" for p in reader.pages]
-            text="\n".join(pages)
-        except: text=""
-    elif name.endswith(".docx"):
-        import docx2txt
-        text=docx2txt.process(io.BytesIO(data))
-    elif any(name.endswith(ext) for ext in ["png","jpg","jpeg"]):
-        images.append((uploaded.name,data))
-    return text.strip(), images
-
 # ---------- SIDEBAR ----------
 with st.sidebar:
-    st.markdown("## 📊 Toolbox")
-    st.markdown("**About**: Zentra = summaries, flashcards, quizzes, mocks, tutor.")
-    st.divider()
-    st.markdown("### 🛠 Tools")
-    st.markdown("• **Summaries** → exam bullets\n• **Flashcards** → Q/A recall\n• **Quizzes** → MCQs + explanations\n• **Mock Exams** → multi-section + rubric\n• **Ask Zentra** → tutor/chat")
-    st.divider()
-    st.markdown("### 🧪 Mock Evaluation")
-    st.write("MCQ, short, long, fill-in.\nDifficulty: *Easy / Standard / Hard*. Scales with content.")
-    st.divider()
-    st.markdown("### 📂 History")
-    for h in load_history():
-        kind,title,score,fb=h
-        st.markdown(f"**{kind}**: {title} → {score}\n> {fb}")
-    st.divider()
-    st.caption("Disclaimer: AI-generated content — verify before exams.")
+    st.markdown("## 📘 How Zentra Works")
+    st.write("Zentra transforms notes into smarter study tools — summaries, flashcards, quizzes, and mock exams with grading. Consistency + feedback = progress.")
+
+    st.markdown("## 🎯 What Zentra Offers")
+    st.markdown("- **Summaries** → clear exam-ready notes\n"
+                "- **Flashcards** → spaced repetition Q/A\n"
+                "- **Quizzes** → adaptive MCQs w/ explanations\n"
+                "- **Mock Exams** → full exam + grading rubric\n"
+                "- **Ask Zentra** → your 24/7 tutor")
+
+    st.markdown("## 📂 History")
+    st.caption("Recent Quizzes")
+    if st.session_state.history_quiz:
+        for i, q in enumerate(st.session_state.history_quiz[-5:][::-1], 1):
+            st.write(f"{i}. {q}")
+    else:
+        st.write("No quizzes yet.")
+
+    st.caption("Recent Mock Exams")
+    if st.session_state.history_mock:
+        for i, m in enumerate(st.session_state.history_mock[-5:][::-1], 1):
+            st.write(f"{i}. {m}")
+    else:
+        st.write("No mocks yet.")
+
+    st.markdown("---")
+    st.caption("Disclaimer: Zentra is an AI assistant. Always double-check before exams.")
 
 # ---------- HERO ----------
-st.markdown("""<div style="background:linear-gradient(90deg,#6a11cb,#2575fc);
-padding:24px;border-radius:16px;color:white">
-<h1>⚡ Zentra — AI Study Buddy</h1>
-<p>Smarter notes → Better recall → Higher scores.</p>
-</div>""",unsafe_allow_html=True)
+st.markdown("""
+<div class="hero">
+  <h1>⚡ Zentra — AI Study Buddy</h1>
+  <p>Smarter notes → Better recall → Higher scores.</p>
+</div>
+""", unsafe_allow_html=True)
 
-st.info("👋 Welcome to Zentra! Upload your notes and let AI transform them into study material.")
+st.info("👋 Welcome to Zentra! Upload your notes and let AI generate study tools.", icon="📘")
 
 # ---------- UPLOAD ----------
-st.markdown("### 📁 Upload your notes")
-col1,col2=st.columns([3,2])
-with col1:
-    uploaded=st.file_uploader("Drag & drop here",type=["pdf","docx","txt","png","jpg","jpeg"])
-    pasted=st.text_area("Or paste notes…",height=150)
-with col2:
-    mode=st.radio("Analysis mode",["Text only","Include images (Vision)"])
+uploaded = st.file_uploader("Upload Notes (PDF/DOCX/TXT)", type=["pdf","docx","txt"])
+pasted = st.text_area("Or paste your notes here…", height=120, label_visibility="collapsed")
+
+def ensure_notes():
+    txt = pasted.strip()
+    if uploaded:
+        txt = (txt + "\n" + uploaded.read().decode("utf-8","ignore")).strip()
+    if not txt:
+        st.warning("Upload or paste notes first.")
+        st.stop()
+    st.session_state.notes_text = txt
+    return txt
 
 # ---------- STUDY TOOLS ----------
 st.markdown("### ✨ Study Tools")
-c1,c2,c3,c4,c5=st.columns(5)
-go_summary=c1.button("📄 Summaries")
-go_cards=c2.button("🧠 Flashcards")
-go_quiz=c3.button("🎯 Quizzes")
-go_mock=c4.button("📝 Mock Exams")
-ask_click=c5.button("💬 Ask Zentra")
+c1,c2,c3,c4,c5 = st.columns(5)
 
-# ---------- ASK ZENTRA CHAT ----------
-if "chat" not in st.session_state: st.session_state.chat=[]
-if ask_click: st.session_state.show_chat=True
-if st.session_state.get("show_chat",False):
-    st.markdown("### 💬 Ask Zentra")
-    q=st.text_input("Ask anything…",key="ask_inp")
-    if st.button("Send"):
-        st.session_state.chat.append(("You",q))
-        ans=ask_openai(q)
-        st.session_state.chat.append(("Zentra",ans))
-    if st.button("Clear"): st.session_state.chat=[]
-    if st.button("Close"): st.session_state.show_chat=False
-    for r,m in st.session_state.chat:
-        st.markdown(f"**{r}**: {m}")
+go_summary = c1.button("📄 Summaries")
+go_cards   = c2.button("🧠 Flashcards")
+go_quiz    = c3.button("🎯 Quizzes")
+go_mock    = c4.button("📝 Mock Exams")
+ask_click  = c5.button("💬 Ask Zentra")
 
-# ---------- HANDLERS ----------
-def ensure_notes():
-    txt,imgs="",""
-    if uploaded: txt,imgs=read_file(uploaded)
-    if pasted.strip(): txt+="\n"+pasted.strip()
-    if not txt and not imgs: st.warning("Your notes look empty."); st.stop()
-    return txt,imgs
+if ask_click: st.session_state.show_chat = True
 
+# ---------- ASK ZENTRA ----------
+def render_chat():
+    st.markdown('<div class="ask-panel">', unsafe_allow_html=True)
+    st.markdown('<div class="ask-header"><b>💬 Ask Zentra</b></div>', unsafe_allow_html=True)
+
+    with st.container():
+        st.markdown('<div class="ask-body">', unsafe_allow_html=True)
+        for role, msg in st.session_state.chat:
+            st.markdown(f"**{'You' if role=='user' else 'Zentra'}:** {msg}")
+        st.markdown('</div>', unsafe_allow_html=True)
+
+    q = st.text_input("Type here...", key="chat_input", on_change=lambda: None)
+    col1, col2, col3 = st.columns([1,1,1])
+    if col1.button("Send") or (q and st.session_state.get("enter_pressed")):
+        st.session_state.chat.append(("user", q))
+        ans = ask_openai(f"User asked: {q}\nNotes:\n{st.session_state.notes_text}")
+        st.session_state.chat.append(("assistant", ans))
+        st.session_state.chat_input = ""
+        st.rerun()
+    if col2.button("Clear"): st.session_state.chat.clear(); st.rerun()
+    if col3.button("Close"): st.session_state.show_chat = False; st.rerun()
+
+    st.markdown('</div>', unsafe_allow_html=True)
+
+if st.session_state.show_chat: render_chat()
+
+# ---------- TOOL HANDLERS ----------
 if go_summary:
-    txt,imgs=ensure_notes()
-    st.markdown("#### ✅ Summary")
-    st.write(ask_openai(f"Summarize in exam bullets:\n{txt}"))
+    text = ensure_notes()
+    st.subheader("✅ Summary")
+    st.markdown(ask_openai(f"Summarize clearly into exam bullets:\n{text}"))
 
 if go_cards:
-    txt,imgs=ensure_notes()
-    st.markdown("#### 🧠 Flashcards")
-    st.write(ask_openai(f"Make flashcards Q/A:\n{txt}"))
+    text = ensure_notes()
+    st.subheader("🧠 Flashcards")
+    st.markdown(ask_openai(f"Make flashcards Q/A covering all content:\n{text}"))
 
 if go_quiz:
-    txt,imgs=ensure_notes()
-    st.markdown("#### 🎯 Quiz")
-    out=ask_openai(f"Create adaptive MCQs with answers & explanations:\n{txt}")
-    save_history("Quiz",uploaded.name if uploaded else "Notes","Completed","AI generated")
-    st.write(out)
+    text = ensure_notes()
+    st.subheader("🎯 Quiz")
+    out = ask_openai(f"Make adaptive MCQs with answers & explanations:\n{text}")
+    st.markdown(out)
+    st.session_state.history_quiz.append("Quiz Attempt")
 
 if go_mock:
-    txt,imgs=ensure_notes()
-    diff=st.selectbox("Difficulty",["Easy","Standard","Hard"])
-    st.markdown("#### 📝 Mock Exam")
-    st.write("Answer below then submit for evaluation:")
-    mcq_ans=st.radio("Q1) Sample MCQ? ",["A","B","C","D"])
-    short=st.text_area("Short Answer:")
-    long=st.text_area("Long Essay:")
-    if st.button("Submit Mock"):
-        prompt=f"Evaluate this mock attempt.\nMCQ:{mcq_ans}\nShort:{short}\nLong:{long}\nNotes:{txt}"
-        fb=ask_openai(prompt)
-        save_history("Mock",uploaded.name if uploaded else "Notes","Scored",fb)
-        st.success("✅ Mock evaluated")
-        st.write(fb)
+    text = ensure_notes()
+    st.subheader("📝 Mock Exam")
+    diff = st.radio("Select difficulty", ["Easy","Standard","Hard"], horizontal=True)
+    if st.button("Start Mock"):
+        st.write("Answer the mock below then submit for grading.")
+        q_short = st.text_area("✍️ Short Answer")
+        q_long  = st.text_area("📝 Long Answer (Essay)")
+        if st.button("Submit Mock"):
+            result = ask_openai(f"Grade this mock (difficulty={diff}). Notes:\n{text}\n\nShort:{q_short}\nLong:{q_long}")
+            st.success("📊 Zentra Evaluation")
+            st.markdown(result)
+            st.session_state.history_mock.append(f"Mock ({diff})")
