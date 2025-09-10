@@ -1,5 +1,4 @@
-streamlit
-openai
+streamlit>=1.33
+openai>=1.30
 pypdf
-python-docx
-
+docx2txt
