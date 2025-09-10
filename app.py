@@ -1,31 +1,33 @@
-# app.py — Zentra Stable International Build
+# Zentra — AI Study Buddy (stable: working buttons + real sidebar + fixed Ask Zentra popup)
 
 import os, io, base64, tempfile
 from typing import List, Tuple
 import streamlit as st
 from openai import OpenAI
 
-# ---------- PAGE CONFIG ----------
+# ---------- PAGE + CSS ----------
 st.set_page_config(
     page_title="Zentra — AI Study Buddy",
     page_icon="⚡",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="expanded",
 )
 
-# ---------- CSS ----------
 st.markdown("""
 <style>
+/* Hide watermark + footer only */
 a[class*="viewerBadge"], div[class*="viewerBadge"], #ViewerBadgeContainer{display:none!important;}
 footer{visibility:hidden;height:0}
+/* Tighter layout */
 .block-container{padding-top:1rem;padding-bottom:3rem;max-width:1200px;}
+/* Hero */
 .hero{background:linear-gradient(90deg,#6a11cb 0%,#2575fc 100%);padding:22px;border-radius:16px;color:#fff;margin-bottom:10px;}
 .hero h1{margin:0;font-size:34px}
 .hero p{margin:6px 0 0;opacity:.92}
-.ask-panel{position:fixed;right:26px;top:100px;width:min(420px,90vw);height:70vh;background:#0e1117;border:1px solid #333;
-           border-radius:12px;box-shadow:0 10px 30px rgba(0,0,0,.45);padding:10px;z-index:9999;}
-.ask-header{display:flex;justify-content:space-between;align-items:center;padding:6px 10px;border-bottom:1px solid #222;}
-.ask-body{padding:8px;height:calc(70vh - 130px);overflow-y:auto;}
+/* Ask panel */
+.ask-panel{position:fixed;right:25px;top:90px;width:360px;height:70vh;background:#0e1117;border:1px solid #333;
+           border-radius:12px;box-shadow:0 8px 28px rgba(0,0,0,.45);padding:10px;z-index:9999;overflow:hidden;}
+.ask-header{font-weight:600;margin-bottom:8px;}
 </style>
 """, unsafe_allow_html=True)
 
@@ -46,14 +48,24 @@ def _client() -> OpenAI:
     os.environ["OPENAI_API_KEY"] = key
     return OpenAI()
 
-MODEL = "gpt-4o-mini"
+MODEL_TEXT  = "gpt-4o-mini"
+MODEL_VISON = "gpt-4o-mini"
 
-def ask_llm(prompt: str, system="You are Zentra, a precise, supportive study buddy. Be concise and clear."):
+def ask_llm(prompt: str, system="You are Zentra, a precise, friendly study buddy. Be concise and clear."):
     r = _client().chat.completions.create(
-        model=MODEL,
+        model=MODEL_TEXT,
         messages=[{"role":"system","content":system},{"role":"user","content":prompt}],
         temperature=0.4,
     )
+    return r.choices[0].message.content.strip()
+
+def ask_vision(prompt: str, images: List[Tuple[str, bytes]], text_hint: str):
+    parts = [{"type":"text","text": f"Use the images + text to answer.\n\nTEXT:\n{text_hint}\n\nPROMPT:\n{prompt}"}]
+    for name,b in images[:2]:
+        b64 = base64.b64encode(b).decode()
+        mime = "image/png" if name.lower().endswith(".png") else "image/jpeg"
+        parts.append({"type":"image_url","image_url":{"url": f"data:{mime};base64,{b64}"}})
+    r = _client().chat.completions.create(model=MODEL_VISON, messages=[{"role":"user","content":parts}], temperature=0.4)
     return r.choices[0].message.content.strip()
 
 # ---------- FILE PARSE ----------
@@ -76,122 +88,160 @@ def read_file(uploaded) -> Tuple[str, List[Tuple[str, bytes]]]:
                 tmp.write(data); tmp.flush()
                 text = docx2txt.process(tmp.name)
         except Exception: text = ""
+    elif name.endswith((".png",".jpg",".jpeg")):
+        images.append((uploaded.name, data))
     else:
         text = data.decode("utf-8","ignore")
     return (text or "").strip(), images
 
 def ensure_notes(pasted, uploaded):
     txt = (pasted or "").strip()
+    imgs: List[Tuple[str, bytes]] = []
     if uploaded:
-        t, _ = read_file(uploaded)
+        t, ii = read_file(uploaded)
         if t: txt = (txt + "\n" + t).strip() if txt else t
+        if ii: imgs = ii
         st.session_state.last_title = uploaded.name
-    if len(txt) < 5:
-        st.warning("Your notes look empty. Paste text or upload a readable PDF/DOCX.")
+    if len(txt) < 5 and not imgs:
+        st.warning("Your notes look empty. Paste text or upload a readable PDF/DOCX (image-only PDFs need the Vision option).")
         st.stop()
     st.session_state.notes_text = txt
-    return txt
+    return txt, imgs
 
 def adaptive_quiz_count(txt: str) -> int:
     return max(3, min(20, len(txt.split()) // 180))
 
-# ---------- SIDEBAR ----------
+# ---------- REAL SIDEBAR ----------
 with st.sidebar:
-    st.markdown("## 📊 Toolbox")
-    st.write("**How Zentra Works**: Turns notes into smart tools for learning. Smarter notes → better recall → higher scores.")
+    st.markdown("### 📊 Toolbox")
+    st.write("**How Zentra Works:** Turns notes into smart tools for learning. Smarter notes → better recall → higher scores.")
     st.markdown("### 🎯 What Zentra Offers")
     st.markdown("- **Summaries** → exam-ready bullets\n- **Flashcards** → active recall Q/A\n- **Quizzes** → MCQs + explanations\n- **Mock Exams** → graded, multi-section with evaluation\n- **Ask Zentra** → personal AI tutor")
-    st.markdown("### 🧪 Mock Evaluation")
+    st.markdown("### 📝 Mock Evaluation")
     st.write("Includes MCQs, short, long, fill-in. Difficulty: *Easy / Standard / Hard*. Zentra grades and gives feedback.")
-    st.markdown("### 📜 History")
+    st.markdown("### 📂 History")
     st.caption("Quizzes:"); st.write(st.session_state.history_quiz or "—")
     st.caption("Mocks:");   st.write(st.session_state.history_mock or "—")
     st.markdown("---")
-    st.caption("Disclaimer: Always verify AI-generated content before exams.")
+    st.caption("Disclaimer: AI-generated content — verify before exams.")
 
 # ---------- HERO ----------
 st.markdown('<div class="hero"><h1>⚡ Zentra — AI Study Buddy</h1><p>Smarter notes → Better recall → Higher scores.</p></div>', unsafe_allow_html=True)
-st.info("👋 Welcome to Zentra! Upload your notes and let AI transform them into study material.")
+st.info("Welcome to Zentra! Upload your notes and let AI transform them into study material.")
 
-# ---------- MAIN ----------
-uploaded = st.file_uploader("📁 Upload notes", type=["pdf","docx","txt"])
-pasted = st.text_area("Or paste your notes here…", height=150)
-mode = st.radio("Analysis mode", ["Text only","Include images (Vision)"], horizontal=True)
-include_images = (mode == "Include images (Vision)")
+# ---------- LAYOUT ----------
+col_main = st.container()
 
-st.markdown("### ✨ Study Tools")
-c1,c2,c3,c4,c5 = st.columns(5)
-go_summary = c1.button("📄 Summaries")
-go_cards   = c2.button("🧠 Flashcards")
-go_quiz    = c3.button("🎯 Quizzes")
-go_mock    = c4.button("📝 Mock Exams")
-open_chat  = c5.button("💬 Ask Zentra")
+with col_main:
+    # Upload
+    st.markdown("### 📁 Upload your notes")
+    cu, cm = st.columns([3,2], vertical_alignment="bottom")
+    with cu:
+        uploaded = st.file_uploader("Drag and drop file here", type=["pdf","docx","txt","png","jpg","jpeg"], label_visibility="collapsed")
+        pasted = st.text_area("Or paste your notes here…", height=150, label_visibility="collapsed")
+    with cm:
+        st.write("**Analysis mode**")
+        mode = st.radio("", ["Text only", "Include images (Vision)"], horizontal=True, label_visibility="collapsed")
+    include_images = (mode == "Include images (Vision)")
 
-if open_chat: st.session_state.chat_open = True
+    # Tools
+    st.markdown("### ✨ Study Tools")
+    c1,c2,c3,c4,c5 = st.columns(5)
+    go_summary = c1.button("📄 Summaries", key="btn_sum")
+    go_cards   = c2.button("🧠 Flashcards", key="btn_card")
+    go_quiz    = c3.button("🎯 Quizzes",    key="btn_quiz")
+    go_mock    = c4.button("📝 Mock Exams", key="btn_mock")
+    open_chat  = c5.button("💬 Ask Zentra", key="btn_chat")
+    if open_chat:
+        st.session_state.chat_open = True
+        st.rerun()
 
-# ---------- ASK ZENTRA ----------
+    out_area = st.container()
+
+    def do_summary(txt):
+        with st.spinner("Generating summary…"):
+            out = ask_llm(f"Summarize into sharp exam bullets.\n\nNOTES:\n{txt}")
+        out_area.subheader("✅ Summary")
+        out_area.markdown(out or "_(no content)_")
+
+    def do_cards(txt):
+        with st.spinner("Generating flashcards…"):
+            out = ask_llm(f"Create flashcards as **Q:** … **A:** … covering all key points.\n\nNOTES:\n{txt}")
+        out_area.subheader("🧠 Flashcards")
+        out_area.markdown(out or "_(no content)_")
+
+    def do_quiz(txt, inc, imgs):
+        with st.spinner("Building quiz…"):
+            n = adaptive_quiz_count(txt)
+            base = f"Create {n} MCQs (A–D) with correct answer + brief explanation.\n\nNOTES:\n{txt}"
+            out = ask_vision(base, imgs, txt) if (inc and imgs) else ask_llm(base)
+        st.session_state.history_quiz.append(st.session_state.last_title)
+        out_area.subheader("🎯 Quiz")
+        out_area.markdown(out or "_(no content)_")
+
+    def do_mock(txt, diff, inc, imgs):
+        with st.spinner("Composing mock exam…"):
+            base = f"""Create a **{diff}** mock exam:
+1) MCQs (A–D)
+2) Short-answer
+3) Long-answer
+4) Fill-in
+Include marking rubric.
+
+NOTES:
+{txt}"""
+            out = ask_vision(base, imgs, txt) if (inc and imgs) else ask_llm(base)
+        st.session_state.history_mock.append(st.session_state.last_title)
+        out_area.subheader("📝 Mock Exam")
+        out_area.markdown(out or "_(no content)_")
+
+    if go_summary or go_cards or go_quiz or go_mock:
+        text, images = ensure_notes(pasted, uploaded)
+
+    if go_summary: do_summary(text)
+    if go_cards:   do_cards(text)
+    if go_quiz:    do_quiz(text, include_images, images)
+    if go_mock:
+        st.session_state.pending_mock = True
+
+    if st.session_state.pending_mock:
+        st.markdown("#### Select difficulty")
+        diff = st.radio("", ["Easy","Standard","Hard"], horizontal=True, key="mock_diff")
+        if st.button("Generate Mock", type="primary", key="mock_go"):
+            do_mock(st.session_state.notes_text, diff, include_images, images if 'images' in locals() else [])
+            st.session_state.pending_mock = False
+
+# ---------- ASK ZENTRA (popup fixed) ----------
 if st.session_state.chat_open:
     st.markdown('<div class="ask-panel">', unsafe_allow_html=True)
-    st.markdown('<div class="ask-header"><b>💬 Ask Zentra</b></div>', unsafe_allow_html=True)
+    st.markdown('<div class="ask-header">💬 Ask Zentra</div>', unsafe_allow_html=True)
+
     if not st.session_state.messages:
-        st.caption("Try: *Explain this formula*, *Make a 7-day plan*, *Test me on topic X*.")
+        st.caption("Try: *Explain this formula*, *Make a 7-day plan*, *Test me on topic X*")
+
     for m in st.session_state.messages:
-        st.markdown(f"**{'You' if m['role']=='user' else 'Zentra'}:** {m['content']}")
-    q = st.text_input("Type here...", key="chat_input", label_visibility="collapsed")
-    col1,col2,col3 = st.columns(3)
-    if col1.button("Send") or (q and st.session_state.get("enter_pressed")):
-        if q.strip():
-            st.session_state.messages.append({"role":"user","content":q.strip()})
-            reply = ask_llm(f"NOTES:\n{st.session_state.notes_text}\n\nUSER: {q}")
+        with st.chat_message(m["role"]): st.markdown(m["content"])
+
+    user_msg = st.chat_input("Type your question…")
+    col1, col2, col3 = st.columns([1,1,1])
+    if col1.button("Send") or user_msg:
+        if user_msg:
+            st.session_state.messages.append({"role":"user","content":user_msg})
+            with st.chat_message("user"): st.markdown(user_msg)
+            try:
+                reply = ask_llm(
+                    f"You are Zentra, the AI tutor. Use notes if needed.\n\n"
+                    f"NOTES:\n{st.session_state.notes_text}\n\n"
+                    f"USER: {user_msg}"
+                )
+            except Exception as e:
+                reply = f"Sorry, error: {e}"
             st.session_state.messages.append({"role":"assistant","content":reply})
-            st.session_state.chat_input = ""
+            with st.chat_message("assistant"): st.markdown(reply)
             st.rerun()
     if col2.button("Clear"):
         st.session_state.messages.clear(); st.rerun()
     if col3.button("Close"):
         st.session_state.chat_open = False; st.rerun()
+
     st.markdown('</div>', unsafe_allow_html=True)
-
-# ---------- HANDLERS ----------
-def do_summary(txt):
-    st.subheader("✅ Summary")
-    out = ask_llm(f"Summarize into exam-style bullets:\n\n{txt}")
-    st.markdown(out)
-
-def do_cards(txt):
-    st.subheader("🧠 Flashcards")
-    out = ask_llm(f"Make Q/A flashcards:\n\n{txt}")
-    st.markdown(out)
-
-def do_quiz(txt):
-    st.subheader("🎯 Quiz")
-    n = adaptive_quiz_count(txt)
-    out = ask_llm(f"Create {n} MCQs with answers and explanations:\n\n{txt}")
-    st.session_state.history_quiz.append(st.session_state.last_title)
-    st.markdown(out)
-
-def do_mock(txt):
-    st.subheader("📝 Mock Exam")
-    diff = st.radio("Difficulty", ["Easy","Standard","Hard"], horizontal=True)
-    if st.button("Start Mock"):
-        # Generate mock with placeholders for answers
-        exam = ask_llm(f"Create a {diff} mock exam with MCQs, short, long, fill-in. Provide marking scheme:\n\n{txt}")
-        st.session_state.history_mock.append(st.session_state.last_title)
-        st.markdown(exam)
-        st.text_area("✍️ Short Answer", key="mock_short")
-        st.text_area("📝 Long Answer", key="mock_long")
-        if st.button("Submit Mock"):
-            ans = ask_llm(
-                f"Grade this mock exam based on rubric:\n\n{exam}\n\n"
-                f"User Short Answer:\n{st.session_state.mock_short}\n\n"
-                f"User Long Answer:\n{st.session_state.mock_long}"
-            )
-            st.subheader("📊 Zentra’s Evaluation")
-            st.markdown(ans)
-
-if go_summary or go_cards or go_quiz or go_mock:
-    text = ensure_notes(pasted, uploaded)
-    if go_summary: do_summary(text)
-    if go_cards: do_cards(text)
-    if go_quiz: do_quiz(text)
-    if go_mock: do_mock(text)
