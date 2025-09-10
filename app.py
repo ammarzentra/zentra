@@ -1,450 +1,410 @@
-# app.py  —  Zentra (polished)
-
-import os, base64, io, json, math, textwrap
+import os, io, base64, datetime
 from typing import List, Tuple
 import streamlit as st
 
-# --------- OpenAI client (v1+ SDK) ----------
-try:
-    from openai import OpenAI
-except Exception:
-    st.stop()
+# OpenAI SDK (v1+)
+from openai import OpenAI
 
+# File parsing
+from pypdf import PdfReader
+import docx  # python-docx
+
+# ----------------- CONFIG -----------------
+st.set_page_config(page_title="Zentra — AI Study Buddy", page_icon="⚡", layout="wide")
+
+# Secrets / Client
 API_KEY = st.secrets.get("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY")
 if not API_KEY:
     st.warning("Add your OpenAI key in Streamlit Secrets as OPENAI_API_KEY.")
 client = OpenAI(api_key=API_KEY)
 
-TEXT_MODEL = "gpt-4o-mini"
-VISION_MODEL = "gpt-4o-mini"
+TEXT_MODEL   = "gpt-4o-mini"
+VISION_MODEL = "gpt-4o-mini"  # lightweight vision
 
-# ---------- UI STYLE / CSS ----------
-st.set_page_config(page_title="Zentra — AI Study Buddy", page_icon="⚡", layout="wide")
-
-HIDE_ST = """
+# ----------------- STYLE (NO STREAMLIT BADGES) -----------------
+st.markdown("""
 <style>
-/* Hide Streamlit footer + menu */
-#MainMenu {visibility: hidden;}
-footer {visibility: hidden;}
-/* Remove bottom-right 'Deploy' on some devices */
-button[kind="header"] {display: none !important;}
+/* Kill Streamlit chrome + mobile badges */
+#MainMenu, footer, header {visibility: hidden;}
+div[data-testid="stToolbar"]{display:none!important;}
+div[data-testid="stDecoration"]{display:none!important;}
+div[data-testid="stStatusWidget"]{display:none!important;}
+.stAppDeployButton{display:none!important;}
+[class*="viewerBadge"]{display:none!important;}
 
-/* App theme */
+/* Theme */
 :root {
-  --zentra-purple: #6e37ff;
-  --zentra-blue: #00a4ff;
-  --card: #101318;
-  --muted: #1b1f27;
-  --text: #e9edf1;
-  --sub: #a7b1c2;
-  --accent: #ffd166;
+  --purple:#6e37ff; --blue:#00a4ff; --card:#0f1420; --muted:#161b28;
+  --text:#ecf1f8; --sub:#a9b5c8; --accent:#ffd166;
 }
-html, body, [class*="css"] { color: var(--text); }
-.block-container { padding-top: 1.2rem; }
+html, body, [class*="css"]{ color:var(--text); }
+.block-container{ padding-top:1.0rem; }
 
-/* Hero card */
-.z-hero {
-  padding: 26px 24px;
-  border-radius: 18px;
-  background: linear-gradient(135deg, var(--zentra-purple), var(--zentra-blue));
-  margin-bottom: 18px;
-  color: #fff;
-  box-shadow: 0 12px 40px rgba(25,25,35,.35);
+/* Hero */
+.z-hero{
+  padding:26px 24px; border-radius:18px;
+  background:linear-gradient(135deg,var(--purple),var(--blue));
+  box-shadow:0 14px 44px rgba(20,22,35,.35); color:#fff; margin-bottom:16px;
 }
-.z-hero h1 { font-size: 40px; line-height: 1.1; margin: 0 0 10px 0; }
-.z-hero p { margin: 0 0 6px 0; font-size: 16px; opacity: .95; }
+.z-hero h1{ font-size:40px; margin:0 0 6px 0; line-height:1.1; font-weight:900; }
+.z-hero p{ margin:0; opacity:.96; }
 
-/* Feature buttons row */
-.z-pill { 
-  display:inline-flex; align-items:center; gap:10px;
-  margin: 8px 10px 0 0; padding: 10px 14px; border-radius: 12px;
-  background: rgba(0,0,0,.28); color: #fff; border: 1px solid rgba(255,255,255,.25);
-  cursor: pointer; user-select: none; transition: .15s all;
-}
-.z-pill:hover { transform: translateY(-1px); background: rgba(0,0,0,.35); }
-
-/* Section titles */
-.z-title { font-weight: 800; letter-spacing: .5px; }
+/* Upload line hint */
+.z-hint{ color:var(--sub); font-size:12px; margin-top:6px; }
 
 /* Card */
-.z-card {
-  background: var(--card); border: 1px solid #232737; border-radius: 14px; padding: 16px;
+.z-card{ background:var(--card); border:1px solid #20283b; border-radius:14px; padding:14px; }
+
+/* Buttons row */
+.stButton>button{ width:100%; border-radius:10px; font-weight:700; padding:12px; }
+.btn-summary{ background:#181f30; border:1px solid #27314a; }
+.btn-cards{ background:#181f30; border:1px solid #27314a; }
+.btn-quiz{ background:#181f30; border:1px solid #27314a; }
+.btn-mock{ background:#181f30; border:1px solid #27314a; }
+
+/* Floating Ask bubble (top-right) */
+.z-ask{
+  position:fixed; top:12px; right:14px; z-index:9998;
+  background:var(--accent); color:#111; padding:10px 14px; border-radius:999px;
+  font-weight:800; box-shadow:0 10px 28px rgba(0,0,0,.3);
 }
+.z-ask a{ color:#111; text-decoration:none; }
+
+/* Chat popup (closable) */
+.z-chat{
+  position:fixed; right:16px; bottom:18px; z-index:9999; width:min(420px,92vw);
+  background:#0b1018; border:1px solid #1f2a3f; border-radius:14px;
+  box-shadow:0 20px 60px rgba(0,0,0,.6);
+}
+.z-chat .hd{ display:flex; align-items:center; justify-content:space-between; padding:10px 12px; border-bottom:1px solid #1c2637; }
+.z-chat .hd b{ font-size:16px; }
+.z-chat .inner{ max-height:52vh; overflow:auto; padding:10px; }
+.z-msg{ margin:6px 0; padding:10px 12px; border-radius:12px; font-size:14px; line-height:1.45; }
+.z-user{ background:#16233a; }
+.z-ai{ background:#111a25; }
+.z-chat .ft{ padding:8px 10px; border-top:1px solid #1c2637; }
 
 /* Sidebar polish */
-section[data-testid="stSidebar"] { width: 315px !important; }
-[data-testid="stSidebar"] .sidebar-content { padding-top: 12px; }
-.z-side h4 { margin: 0 0 8px 0; }
-.z-side p, .z-side li, .z-side small { color: var(--sub); }
+section[data-testid="stSidebar"]{ width:320px !important; }
+.z-side h4{ margin:0 0 6px 0; }
+.z-side p, .z-side li, .z-side small{ color:var(--sub); }
 
-/* Floating Ask Zentra bubble (top-right) */
-.z-ask-btn {
-  position: fixed; top: 16px; right: 16px; z-index: 9999;
-  background: var(--accent); color:#1a1a1a; font-weight: 700;
-  border: none; padding: 10px 14px; border-radius: 999px; box-shadow: 0 8px 22px rgba(0,0,0,.25);
-  cursor: pointer;
+/* Footer brand */
+.z-foot{
+  text-align:center; color:#7f8aa3; font-size:12px; margin-top:16px; opacity:.9;
 }
-.z-chat {
-  position: fixed; right: 16px; bottom: 18px; z-index: 9998; width: min(420px, 92vw);
-  background: #0d1117; border: 1px solid #222a3a; border-radius: 14px; padding: 10px 10px 12px 10px;
-  box-shadow: 0 18px 50px rgba(0,0,0,.5);
-}
-.z-chat h4 { margin: 4px 0 6px 6px; }
-.z-chat .inner { max-height: 52vh; overflow:auto; padding: 8px; border-radius: 10px; background: #0a0e14; border: 1px solid #1f2734; }
-.z-msg { margin: 6px 0; padding: 10px 12px; border-radius: 12px; }
-.z-user { background: #16233a; }
-.z-ai { background: #111921; }
-
-/* Tool row quick buttons */
-.z-quick button { margin-right: 8px; }
-
-/* Hover tooltips (title attr) */
-a[role="button"] { text-decoration: none !important; }
 </style>
-"""
-st.markdown(HIDE_ST, unsafe_allow_html=True)
+""", unsafe_allow_html=True)
 
-# ---------- SIDEBAR ----------
+# ----------------- SIDEBAR -----------------
+if "history" not in st.session_state:
+    st.session_state.history = {"quizzes": [], "mocks": []}  # list of dicts
+
 with st.sidebar:
-    st.markdown("### 📊 Progress")
-    c1, c2 = st.columns(2)
-    c1.metric("Quizzes", st.session_state.get("q_count", 0))
-    c2.metric("Mock Exams", st.session_state.get("m_count", 0))
+    st.markdown('<div class="z-side">', unsafe_allow_html=True)
+    st.markdown("### 📘 About Zentra")
+    st.write("Zentra turns your notes into **summaries**, **flashcards**, **quizzes**, and **mock exams**, plus an on-demand **AI tutor**. Smarter practice → better recall → higher scores.")
 
-    st.divider()
-    st.markdown("### ℹ️ About Zentra", help="Why we built this")
-    st.write(
-        "Zentra accelerates learning with **clean summaries**, **active-recall flashcards**, "
-        "**adaptive quizzes**, **mock exams**, and a built-in **AI tutor**. "
-        "Consistency + feedback = progress."
-    )
-
-    st.divider()
     st.markdown("### 🧰 What each tool does")
     st.markdown("- **Summaries** → exam-ready bullet points")
-    st.markdown("- **Flashcards** → spaced-repetition prompts")
-    st.markdown("- **Quizzes** → MCQs that adapt to coverage & difficulty")
-    st.markdown("- **Mock Exams** → multi-section test + marking guide")
-    with st.expander("🧪 How mock exam evaluation works"):
-        st.write(
-            "We auto-size the exam by note length and weight sections. "
-            "Scoring scales from 10 → 100 depending on content volume; "
-            "rubrics are included so you can see where to improve."
-        )
+    st.markdown("- **Flashcards** → spaced-recall prompts covering all key points")
+    st.markdown("- **Quizzes** → AI-chosen number of MCQs to test core concepts")
+    st.markdown("- **Mock Exams** → multi-section exam with marking & rubric")
+    st.caption("Tip: Hover tool buttons for one-line hints.")
 
-    st.divider()
-    st.markdown("### 🧠 How Zentra works")
+    st.markdown("### 🧪 Mock Exam Evaluation")
     st.write(
-        "Upload notes (**PDF/DOCX/TXT**, and optionally **images**). "
-        "Select **Text-only** for cheaper runs, or **Include images** to analyze figures using vision."
+        "Zentra sizes total marks by content length (10→100). Sections include MCQs, "
+        "short and long answers, and fill-in-the-blanks. A **marking scheme & rubric** "
+        "explain how to score and improve."
     )
 
-    st.divider()
-    with st.expander("⚠️ Disclaimer"):
-        st.write(
-            "Zentra is an AI assistant. Always verify important answers and follow your course rules."
-        )
+    st.markdown("### 🧾 History")
+    if st.session_state.history["quizzes"] or st.session_state.history["mocks"]:
+        if st.session_state.history["quizzes"]:
+            st.write("**Quizzes**")
+            for q in st.session_state.history["quizzes"][-8:][::-1]:
+                st.caption(f"• {q['ts']} — ~{q['n_questions']} Qs (auto)")
+        if st.session_state.history["mocks"]:
+            st.write("**Mock Exams**")
+            for m in st.session_state.history["mocks"][-8:][::-1]:
+                st.caption(f"• {m['ts']} — {m['difficulty']} — Total {m['total_marks']} marks")
+    else:
+        st.caption("No attempts yet. Generate a quiz or mock to see history.")
 
-# ---------- Floating Ask Zentra toggle ----------
-if "show_chat" not in st.session_state: st.session_state.show_chat = False
-if "chat" not in st.session_state: st.session_state.chat = []
+    st.markdown("### ⚠️ Disclaimer")
+    st.write("Zentra is an AI study assistant. Always verify outputs and follow your course rules.")
+    st.markdown('</div>', unsafe_allow_html=True)
 
-colA, colB, colC = st.columns([1,6,1])
-with colB:
-    st.markdown(
-        '<button class="z-ask-btn" onclick="window.parent.postMessage({type:\'zentra_toggle_chat\'}, \'*\')">💬 Ask Zentra</button>',
-        unsafe_allow_html=True,
-    )
+# ----------------- FLOATING ASK ZENTRA -----------------
+# Use query params to open/close without JS hacks
+qp = st.experimental_get_query_params()
+chat_open = qp.get("chat", ["close"])[0] == "open"
 
-# small js to toggle Streamlit state
-st.components.v1.html("""
-<script>
-window.addEventListener('message', (e)=>{
-  if(e.data && e.data.type==='zentra_toggle_chat'){
-    const s = window.parent.document.querySelector('iframe').contentWindow;
-    s.postMessage({is_toggle_chat: true}, '*');
-  }
-});
-</script>
-""", height=0)
-
-# bridge to session_state
-msg = st.experimental_get_query_params()
-# Cheap hack: Streamlit can't get postMessage easily; add a small button as fallback
-toggle = st.button(" ", key="__hidden_toggle__", help="hidden")
-if toggle: st.session_state.show_chat = not st.session_state.show_chat
-
-# ---------- HERO ----------
+ask_tip = "Ask Zentra anything — from any subject. Get clear explanations, study plans, and answers tailored just for you."
 st.markdown(
-    """
-<div class="z-hero">
-  <h1>⚡ Zentra — AI Study Buddy</h1>
-  <p>Smarter notes → better recall → higher scores. Upload or paste your notes; Zentra builds <b>summaries</b>, <b>flashcards</b>, <b>quizzes</b> & <b>mock exams</b> — plus a tutor you can chat with.</p>
-  <div>
-    <a role="button" class="z-pill" title="Turn long notes into exam-ready bullets" href="#tools">🗂️ Summaries</a>
-    <a role="button" class="z-pill" title="Active-recall prompts that cover all key points" href="#tools">🧠 Flashcards</a>
-    <a role="button" class="z-pill" title="MCQs that adapt to your content" href="#tools">🎯 Quizzes</a>
-    <a role="button" class="z-pill" title="Multi-section exam + rubric" href="#tools">📝 Mock Exams</a>
-  </div>
-</div>
-""",
+    f'<div class="z-ask" title="{ask_tip}"><a href="?chat=open#chat">💬 Ask Zentra</a></div>',
     unsafe_allow_html=True,
 )
 
-st.success("👋 Welcome to Zentra! Upload your notes and let AI transform them into study material.", icon="👋")
+# ----------------- HEADER -----------------
+st.markdown("""
+<div class="z-hero">
+  <h1>⚡ Zentra — AI Study Buddy</h1>
+  <p>Smarter notes → Better recall → Higher scores.</p>
+</div>
+""", unsafe_allow_html=True)
 
-# ---------- Upload / Paste ----------
-st.markdown("### 🗂️ Upload your notes (PDF / DOCX / TXT) or paste below")
-uCol1, uCol2 = st.columns([3,1])
-with uCol1:
-    files = st.file_uploader(
-        "Upload file",
-        type=["pdf", "docx", "txt", "png", "jpg", "jpeg"],
-        accept_multiple_files=True,
-        label_visibility="collapsed",
-    )
-with uCol2:
-    vision_mode = st.radio(
-        "Analysis mode",
-        ["Text only", "Include images (beta)"],
-        index=0,
-        horizontal=True,
-        label_visibility="visible",
-    )
+# First-time welcome
+if "welcomed" not in st.session_state:
+    st.info("👋 Welcome to Zentra! Upload your notes and let AI transform them into study material.")
+    st.session_state.welcomed = True
 
-raw_text = st.text_area("Or paste your notes here…", height=180, label_visibility="collapsed")
+# ----------------- UPLOAD -----------------
+st.markdown("### 📂 Upload your notes")
+u1, u2 = st.columns([4,2])
+with u1:
+    uploads = st.file_uploader("Upload", type=["pdf","docx","txt","png","jpg","jpeg"],
+                               accept_multiple_files=True, label_visibility="collapsed")
+    st.caption("*(Supports PDF, DOCX, TXT — and images if you enable Vision)*")
+with u2:
+    mode = st.radio("Analysis mode", ["Text only","Include images (Vision)"], index=0, horizontal=True)
 
-def read_txt(f) -> str:
+# Also allow pasted text
+raw_text = st.text_area("Or paste your notes here…", height=160, label_visibility="collapsed")
+
+# ----------------- EXTRACTORS -----------------
+def read_pdf(file) -> str:
     try:
-        return f.read().decode("utf-8", errors="ignore")
-    except Exception:
-        f.seek(0)
-        return f.read().decode("latin-1", errors="ignore")
-
-def read_pdf(f) -> str:
-    # robust fallback pypdf (no heavy deps)
-    try:
-        from pypdf import PdfReader
-        reader = PdfReader(f)
-        text = []
-        for page in reader.pages:
-            text.append(page.extract_text() or "")
-        return "\n".join(text)
+        data = file.getvalue()
+        reader = PdfReader(io.BytesIO(data))
+        parts = []
+        for p in reader.pages:
+            try:
+                parts.append(p.extract_text() or "")
+            except Exception:
+                parts.append("")
+        return "\n".join(parts)
     except Exception:
         return ""
 
-def read_docx(f) -> str:
+def read_docx(file) -> str:
     try:
-        import docx2txt  # lightweight
-        # docx2txt expects a path; use bytes -> temp
-        data = f.read()
+        data = file.getvalue()
         bio = io.BytesIO(data)
-        # workaround: save temp
-        tmp = "/tmp/_docx_upload.docx"
-        with open(tmp, "wb") as out: out.write(bio.getbuffer())
-        return docx2txt.process(tmp) or ""
+        document = docx.Document(bio)
+        return "\n".join([para.text for para in document.paragraphs])
     except Exception:
         return ""
 
-def gather_text_and_images(files) -> Tuple[str, List[str]]:
-    text_chunks, img_dataurls = [], []
+def read_txt(file) -> str:
+    try:
+        return file.read().decode("utf-8", errors="ignore")
+    except Exception:
+        try:
+            file.seek(0)
+            return file.read().decode("latin-1", errors="ignore")
+        except Exception:
+            return ""
+
+def collect_text_and_images(files) -> Tuple[str, List[str]]:
+    text_chunks, imgs = [], []
     if not files: return "", []
     for f in files:
         name = (f.name or "").lower()
         try:
-            if name.endswith(".txt"):
-                text_chunks.append(read_txt(f))
-            elif name.endswith(".pdf"):
+            if name.endswith(".pdf"):
                 text_chunks.append(read_pdf(f))
             elif name.endswith(".docx"):
                 text_chunks.append(read_docx(f))
-            elif name.endswith((".png",".jpg",".jpeg")):
-                if vision_mode.startswith("Include"):
-                    # convert to base64 data URL for OpenAI vision
-                    bytes_data = f.read()
-                    b64 = base64.b64encode(bytes_data).decode("utf-8")
-                    mime = "image/png" if name.endswith(".png") else "image/jpeg"
-                    img_dataurls.append(f"data:{mime};base64,{b64}")
-            else:
-                pass
+            elif name.endswith(".txt"):
+                text_chunks.append(read_txt(f))
+            elif name.endswith((".png",".jpg",".jpeg")) and mode.startswith("Include"):
+                b = f.getvalue()
+                b64 = base64.b64encode(b).decode("utf-8")
+                mime = "image/png" if name.endswith(".png") else "image/jpeg"
+                imgs.append(f"data:{mime};base64,{b64}")
         except Exception:
-            # keep going; don't crash
+            # never crash the app on a single bad file
             pass
-    return "\n".join([c for c in text_chunks if c.strip()]), img_dataurls
+    return "\n".join([t for t in text_chunks if t.strip()]), imgs
 
-uploaded_text, uploaded_images = gather_text_and_images(files)
-full_text = "\n".join([t for t in [uploaded_text, raw_text] if t.strip()])
+uploaded_text, uploaded_imgs = collect_text_and_images(uploads)
+full_text = "\n".join([t for t in [uploaded_text, raw_text] if t and t.strip()])
 
-def token_hint_len(s: str) -> int:
-    # rough count to guide volumes
-    return max(1, len(s.split()))
-
-def smart_counts(words: int) -> Tuple[int,int]:
-    # returns (#flashcards, #quiz_qs) sized to content length
-    if words < 400:
-        return (8, 6)
-    if words < 1200:
-        return (14, 10)
-    if words < 2500:
-        return (22, 16)
-    return (32, 24)
-
-# ---------- OpenAI helpers ----------
-def ask_openai(prompt: str, images: List[str] = None) -> str:
-    """Unified call: text-only or with images (vision)"""
+# ----------------- AI HELPERS -----------------
+def ask_openai(prompt: str, images: List[str] = None, temperature: float = 0.25) -> str:
     try:
-        if images and len(images) > 0 and vision_mode.startswith("Include"):
-            content = [{"type":"text","text":prompt}]
-            for durl in images[:8]:  # limit a bit
-                content.append({"type":"image_url","image_url":{"url": durl}})
+        if images and mode.startswith("Include"):
+            content = [{"type":"text","text": prompt}]
+            for d in images[:8]:
+                content.append({"type":"image_url","image_url":{"url": d}})
             resp = client.chat.completions.create(
                 model=VISION_MODEL,
                 messages=[{"role":"user","content": content}],
-                temperature=0.3,
+                temperature=temperature,
             )
         else:
             resp = client.chat.completions.create(
                 model=TEXT_MODEL,
                 messages=[{"role":"user","content": prompt}],
-                temperature=0.25,
+                temperature=temperature,
             )
         return resp.choices[0].message.content.strip()
     except Exception as e:
         return f"⚠️ Error: {e}"
 
-def need_text() -> bool:
-    if not full_text.strip() and not uploaded_images:
-        st.warning("Upload a file or paste some notes first.", icon="⚠️")
+def word_count(s: str) -> int:
+    return max(1, len(s.split()))
+
+def ai_counts_hint(w: int) -> Tuple[int,int]:
+    # hint sizes (AI still decides contents)
+    if w < 400:   return (10, 6)   # flashcards, quiz
+    if w < 1200:  return (16, 12)
+    if w < 2500:  return (24, 18)
+    return (36, 24)
+
+def need_notes() -> bool:
+    if not full_text.strip() and not uploaded_imgs:
+        st.warning("Upload a file or paste notes first.", icon="⚠️")
         return True
     return False
 
-st.markdown('<div id="tools"></div>', unsafe_allow_html=True)
-st.subheader("✨ Study Tools")
+# ----------------- TOOLS UI -----------------
+st.markdown("### ✨ Study Tools")
+t1, t2, t3, t4 = st.columns(4)
 
-# Quick action row
-q = st.container()
-with q:
-    c1, c2, c3, c4 = st.columns(4)
-    with c1:
-        do_summary = st.button("🗂️ Summaries", help="Exam-ready bullet points")
-    with c2:
-        do_cards = st.button("🧠 Flashcards", help="Active-recall prompts")
-    with c3:
-        do_quiz = st.button("🎯 Quizzes", help="Adaptive MCQs")
-    with c4:
-        do_mock = st.button("📝 Mock Exams", help="Multi-section exam + rubric")
+# Summaries
+with t1:
+    gen_summary = st.button("📑 Summaries", help="Turn your notes into exam-ready bullet points", type="primary")
+# Flashcards
+with t2:
+    gen_cards = st.button("🃏 Flashcards", help="Spaced-recall prompts covering all key ideas", type="primary")
+# Quizzes
+with t3:
+    gen_quiz = st.button("🎯 Quizzes", help="AI decides how many MCQs you need", type="primary")
+# Mock Exams (difficulty shows only after tap)
+with t4:
+    open_mock = st.button("📝 Mock Exams", help="Full multi-section exam + marking", type="primary")
 
-# ---------- Actions ----------
-if do_summary:
-    if not need_text():
-        prompt = f"""Summarize clearly in exam-style bullets.
-Cover all major sections and sub-concepts.
-Use short lines, logical grouping, and headers.
-Text:
+# ----------------- ACTIONS -----------------
+if gen_summary:
+    if not need_notes():
+        prompt = f"""Summarize the following notes into **clear exam-ready bullet points**.
+Group by topics with short headers; cover *all* major points and definitions.
+Be concise but complete. Include key formulas/dates if present.
+
+NOTES:
 {full_text[:18000]}"""
-        summary = ask_openai(prompt, uploaded_images)
-        st.markdown("#### 📌 Summary")
-        st.write(summary)
+        st.subheader("📌 Summary")
+        st.write(ask_openai(prompt, uploaded_imgs))
 
-if do_cards:
-    if not need_text():
-        words = token_hint_len(full_text)
-        n_cards, _ = smart_counts(words)
-        prompt = f"""Create {n_cards} high-quality **flashcards** from the notes.
-Mix definition, concept-explain, compare/contrast, application.
-Return in numbered Q / A format.
-Notes:
+if gen_cards:
+    if not need_notes():
+        w = word_count(full_text)
+        n_cards, _ = ai_counts_hint(w)
+        prompt = f"""Create ~{n_cards} **flashcards** that cover all essential knowledge.
+Mix definitions, conceptual why/how, compare/contrast, and applied examples.
+Format as:
+1) Q: ...
+   A: ...
+2) Q: ...
+   A: ...
+Use the notes below:
+
 {full_text[:18000]}"""
-        cards = ask_openai(prompt, uploaded_images)
-        st.markdown("#### 🧠 Flashcards")
-        st.write(cards)
+        st.subheader("🧠 Flashcards")
+        st.write(ask_openai(prompt, uploaded_imgs))
 
-if do_quiz:
-    if not need_text():
-        words = token_hint_len(full_text)
-        _, n_q = smart_counts(words)
-        prompt = f"""Build an **adaptive quiz** with {n_q} multiple-choice questions.
-Each item: 1 correct + 3 plausible distractors. Vary difficulty, cover all topics.
-After the list, include an **Answer Key with short explanations**.
-Notes:
+if gen_quiz:
+    if not need_notes():
+        w = word_count(full_text)
+        _, n_q = ai_counts_hint(w)  # hint only; AI can adjust
+        prompt = f"""Generate an **adaptive multiple-choice quiz** that fully tests key concepts.
+You decide the appropriate number of questions (typical range {max(6, n_q-4)}–{n_q+6}).
+Each item: 1 correct answer + 3 plausible distractors.
+Vary difficulty and rotate stems (conceptual, application, scenario).
+After the questions, include an **Answer Key with concise explanations**.
+
+NOTES:
 {full_text[:18000]}"""
-        quiz = ask_openai(prompt, uploaded_images)
-        st.markdown("#### 🎯 Quiz")
-        st.write(quiz)
-        st.session_state["q_count"] = st.session_state.get("q_count",0)+1
+        st.subheader("🎯 Quiz")
+        quiz_text = ask_openai(prompt, uploaded_imgs)
+        st.write(quiz_text)
+        # Track sidebar history (approx count if we can estimate)
+        approx_qs = 0
+        for line in quiz_text.splitlines():
+            if line.strip().startswith(("1)","1.","Q1","Q 1")):
+                approx_qs = max(approx_qs, 1)
+                break
+        ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+        st.session_state.history["quizzes"].append({"ts": ts, "n_questions": "auto"})
 
-if do_mock:
-    if not need_text():
-        words = token_hint_len(full_text)
-        # Scale total marks by content size
-        total = 20 if words<600 else 40 if words<1500 else 70 if words<3000 else 100
-        prompt = f"""Create a **mock exam** sized to the notes. Include:
-- Section A: {max(5, total//5)} MCQs (1 mark each).
-- Section B: {max(3, total//10)} Short-answer prompts (3–5 lines).
-- Section C: {max(1, total//20)} Long-answer prompts (analytical).
-Provide a **marking scheme** and **rubric** for each section.
-Total marks: {total}. Balance topic coverage fairly.
-Notes:
+if open_mock:
+    if not need_notes():
+        st.info("Choose difficulty level for your mock exam.")
+        dcol1, dcol2, dcol3 = st.columns(3)
+        with dcol1: d_easy = st.button("Easy")
+        with dcol2: d_med  = st.button("Medium")
+        with dcol3: d_hard = st.button("Hard")
+
+        chosen = "Medium"
+        if d_easy: chosen = "Easy"
+        if d_med:  chosen = "Medium"
+        if d_hard: chosen = "Hard"
+
+        if d_easy or d_med or d_hard:
+            w = word_count(full_text)
+            total = 20 if w < 600 else 40 if w < 1500 else 70 if w < 3000 else 100
+            prompt = f"""Create a **professional mock exam** with difficulty = {chosen}.
+Auto-size to the notes (total marks ~{total}). Include sections:
+- MCQs (1 mark each)
+- Short-answer (3–5 lines each)
+- Long-answer (analytical/essay)
+- Fill-in-the-blanks (core facts/terms)
+
+Provide:
+1) The full exam paper grouped by sections.
+2) A **marking scheme** and **rubric** describing how to grade.
+3) Topic coverage summary and common pitfalls.
+
+NOTES:
 {full_text[:18000]}"""
-        exam = ask_openai(prompt, uploaded_images)
-        st.markdown("#### 📝 Mock Exam")
-        st.write(exam)
-        st.session_state["m_count"] = st.session_state.get("m_count",0)+1
+            st.subheader(f"📝 Mock Exam — {chosen}")
+            exam = ask_openai(prompt, uploaded_imgs)
+            st.write(exam)
+            ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+            st.session_state.history["mocks"].append({"ts": ts, "difficulty": chosen, "total_marks": total})
 
-# ---------- Floating Ask Zentra chat ----------
-def chat_turn(user_msg: str) -> str:
-    # include recent chat + (optionally) current doc context
-    history = st.session_state.chat[-10:]
-    hist_text = ""
-    for role, msg in history:
-        hist_text += f"{role.upper()}: {msg}\n"
-    context = f"\n\nCONTEXT (notes snippet):\n{full_text[:3500]}" if full_text.strip() else ""
-    prompt = f"""You are Zentra, a precise tutor. Answer clearly and concisely.
-Explain at the student's level and show steps when helpful.
-If the user highlights a line, unpack it with intuition and examples.
-{context}
-{hist_text}
-USER: {user_msg}
-"""
-    reply = ask_openai(prompt, uploaded_images)
-    return reply
+# ----------------- ASK ZENTRA POPUP -----------------
+# Open popup if ?chat=open
+if chat_open:
+    st.markdown('<div id="chat"></div>', unsafe_allow_html=True)
+    if "chat_log" not in st.session_state:
+        st.session_state.chat_log = [("ai","Hi! I’m Zentra. Ask me anything about your notes or any subject.")]
 
-if st.session_state.show_chat:
-    with st.container():
-        st.markdown('<div class="z-chat">', unsafe_allow_html=True)
-        st.markdown("<h4>💬 Ask Zentra</h4>", unsafe_allow_html=True)
-        st.markdown('<div class="inner">', unsafe_allow_html=True)
-        if len(st.session_state.chat)==0:
-            st.markdown('<div class="z-msg z-ai">Hi! Ask anything about your notes or any concept.</div>', unsafe_allow_html=True)
-        else:
-            for role, msg in st.session_state.chat[-12:]:
-                cls = "z-user" if role=="user" else "z-ai"
-                st.markdown(f'<div class="z-msg {cls}">{msg}</div>', unsafe_allow_html=True)
-        st.markdown('</div>', unsafe_allow_html=True)
-        with st.form("ask_form", clear_on_submit=True):
-            ask = st.text_input("Type your question", label_visibility="collapsed")
-            sent = st.form_submit_button("Send")
-        if sent and ask.strip():
-            st.session_state.chat.append(("user", ask.strip()))
-            ans = chat_turn(ask.strip())
-            st.session_state.chat.append(("ai", ans))
-            st.rerun()
-        st.markdown("</div>", unsafe_allow_html=True)
+    st.markdown('<div class="z-chat">', unsafe_allow_html=True)
+    st.markdown('<div class="hd"><b>💬 Ask Zentra</b> <a href="?chat=close" style="text-decoration:none;color:#9fb3d9;">✖</a></div>', unsafe_allow_html=True)
+    st.markdown('<div class="inner">', unsafe_allow_html=True)
+    for role, msg in st.session_state.chat_log[-22:]:
+        cls = "z-user" if role=="user" else "z-ai"
+        st.markdown(f'<div class="z-msg {cls}">{msg}</div>', unsafe_allow_html=True)
+    st.markdown('</div>', unsafe_allow_html=True)
+    with st.form("zentra_chat", clear_on_submit=True):
+        user_q = st.text_input("Type your question", label_visibility="collapsed")
+        send = st.form_submit_button("Send")
+    if send and user_q.strip():
+        st.session_state.chat_log.append(("user", user_q.strip()))
+        # Include context snippet from current notes
+        context = f"\n\nCONTEXT (excerpt from notes):\n{full_text[:3000]}" if full_text.strip() else ""
+        reply = ask_openai(
+            f"You are Zentra, a precise, friendly tutor. Explain clearly with steps and examples when helpful."
+            f"{context}\n\nUSER: {user_q.strip()}"
+        )
+        st.session_state.chat_log.append(("ai", reply))
+        st.experimental_set_query_params(chat="open")  # keep open on rerun
+        st.rerun()
+    st.markdown('</div>', unsafe_allow_html=True)
 
-# ---------- Hover-to-Ask (selection helper) ----------
-st.markdown("""
-<script>
-document.addEventListener('mouseup', function(){
-  let s = window.getSelection().toString();
-  if(s && s.length > 3){
-    const ok = confirm("Ask Zentra about:\n\n" + s + "\n\nOpen chat?");
-    if(ok){
-      // toggle chat
-      const stBtn = window.parent.document.querySelector('button[kind="secondary"]');
-      // fallback to hidden button
-      const all = window.parent.document.querySelectorAll('button');
-    }
-  }
-});
-</script>
-""", unsafe_allow_html=True)
+# ----------------- FOOTER BRAND -----------------
+st.markdown('<div class="z-foot">Powered by Zentra AI</div>', unsafe_allow_html=True)
