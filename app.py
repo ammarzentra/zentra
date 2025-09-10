@@ -1,435 +1,384 @@
-# app.py — Zentra (final build)
-# Features:
-# - Clean hero + dark UI
-# - Upload PDF/DOCX/TXT or paste notes
-# - PDF flow: student chooses Text-only vs Vision (images/diagrams) analysis
-# - Summaries, Flashcards (auto-sized), Quiz (few size options based on note length), Mock Exam (scaled, graded /100)
-# - Ask Zentra (sample prompts, clean chat)
-# - Downloads to PDF for all outputs
-# - Sidebar: Progress + "Memory Boost Games" (Memory Grid, Speed Tap Recall)
-# - Hides Streamlit branding (CSS hack)
+import os, io, random, time, textwrap
+from datetime import datetime
+from typing import List, Tuple
 
-import os, re, io, time, base64, math
-from typing import List, Dict
 import streamlit as st
-from openai import OpenAI
 
-# ------------ UI / THEME ------------
+# -------------------------------
+# OPENAI CLIENT (v1 SDK)
+# -------------------------------
+try:
+    from openai import OpenAI
+except Exception:
+    st.stop()
+
+API_KEY = st.secrets.get("OPENAI_API_KEY", os.getenv("OPENAI_API_KEY", ""))
+if not API_KEY:
+    st.markdown("⚠️ **Missing API key**. Add it in Streamlit → Settings → Secrets as `OPENAI_API_KEY`.")
+    st.stop()
+
+client = OpenAI(api_key=API_KEY)
+MODEL = "gpt-4o-mini"
+
+# -------------------------------
+# SMALL UTILITIES
+# -------------------------------
+def soft_tokens(s: str) -> int:
+    # quick n’ dirty token proxy
+    return max(1, len(s.split()) // 0.75)
+
+def pick_counts_by_length(words: int) -> Tuple[int, int]:
+    """Return (flashcards, mcqs) by approximate note size."""
+    if words < 500:
+        return (8, 6)
+    elif words < 1500:
+        return (16, 12)
+    elif words < 4000:
+        return (28, 20)
+    else:
+        return (40, 30)
+
+def safe_chat(system: str, user: str) -> str:
+    try:
+        r = client.chat.completions.create(
+            model=MODEL,
+            messages=[{"role":"system","content":system},{"role":"user","content":user}],
+            temperature=0.2,
+        )
+        return r.choices[0].message.content.strip()
+    except Exception as e:
+        st.toast("Something went wrong. Try again in a moment.", icon="⚠️")
+        return f"(Temporarily unavailable: {e.__class__.__name__})"
+
+def make_pdf_bytes(title: str, lines: List[str]) -> bytes:
+    """Try to build a lightweight PDF. Falls back to TXT if fpdf missing."""
+    try:
+        from fpdf import FPDF
+        pdf = FPDF()
+        pdf.set_auto_page_break(auto=True, margin=12)
+        pdf.add_page()
+        pdf.set_font("Arial", "B", 16)
+        pdf.cell(0, 10, title, ln=True)
+        pdf.set_font("Arial", "", 12)
+        for ln in lines:
+            for wrapped in textwrap.wrap(ln, 92):
+                pdf.cell(0, 7, wrapped, ln=True)
+        b = io.BytesIO()
+        pdf.output(b)
+        return b.getvalue()
+    except Exception:
+        # plain text fallback
+        buf = "\n".join(lines).encode("utf-8")
+        return buf
+
+def extract_text(uploaded) -> str:
+    """PDF/DOCX/TXT → text. Leave images for 'Vision' path later."""
+    name = uploaded.name.lower()
+    data = uploaded.read()
+    if name.endswith(".txt"):
+        return data.decode("utf-8", errors="ignore")
+    if name.endswith(".docx"):
+        try:
+            from docx import Document
+        except Exception:
+            st.error("`python-docx` not installed. Add to requirements.txt.")
+            st.stop()
+        bio = io.BytesIO(data)
+        doc = Document(bio)
+        return "\n".join([p.text for p in doc.paragraphs])
+    # PDF
+    try:
+        from pypdf import PdfReader
+    except Exception:
+        st.error("`pypdf` not installed. Add to requirements.txt.")
+        st.stop()
+    reader = PdfReader(io.BytesIO(data))
+    txt = []
+    for p in reader.pages:
+        try:
+            txt.append(p.extract_text() or "")
+        except Exception:
+            txt.append("")
+    return "\n".join(txt)
+
+def outline_from_text(notes: str) -> str:
+    return safe_chat(
+        "You write terse outlines for long study notes.",
+        f"Make a 5-10 bullet outline capturing the structure of these notes:\n\n{notes[:12000]}",
+    )
+
+# -------------------------------
+# PAGE CONFIG + CSS POLISH
+# -------------------------------
 st.set_page_config(page_title="Zentra — AI Study Buddy", page_icon="⚡", layout="wide")
-HIDE = """
+
+HIDE_STREAMLIT = """
 <style>
-#MainMenu, footer, header {visibility: hidden;}
-.viewerBadge_container__1QSob, .stAppDeployButton {display: none !important;}
-.block-container {padding-top: 1rem; padding-bottom: 2rem;}
+/* Hide Streamlit footer/header badges */
+header [data-testid="stToolbar"] { visibility: hidden; height: 0; }
+footer { visibility: hidden; height: 0; }
 /* Hero */
-.hero{background:linear-gradient(135deg,#251d49 0%,#4b2a84 100%);
-border-radius:18px;padding:20px 22px;color:#fff;border:1px solid rgba(255,255,255,.08)}
-.hero h1{margin:0 0 6px 0;font-weight:800}
-.hero p{opacity:.95;margin:0}
-/* Pills */
-.pill{display:inline-block;padding:6px 10px;margin:8px 8px 0 0;border-radius:999px;font-size:.85rem;
-background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.12)}
-/* Buttons */
-.stButton>button{width:100%;border-radius:12px;padding:12px 16px;font-weight:700;
-background:linear-gradient(90deg,#7a2bf5,#ff2bb3);border:0}
-.stDownloadButton>button{width:100%;border-radius:10px;padding:9px 14px;font-weight:700}
-/* Cards */
-.card{border:1px solid rgba(200,200,200,.12);border-radius:12px;padding:16px;background:rgba(255,255,255,.02)}
-.small{font-size:.9rem;opacity:.85}
-/* Chat bubbles */
-.bubble{border-radius:12px;padding:10px 12px;margin:6px 0}
-.user{background:#1b1f2a;border:1px solid #2a2f3a}
-.assistant{background:#141827;border:1px solid #24293a}
-.kpi{background:#0d0f14;border:1px solid #222531;border-radius:12px;padding:16px;text-align:center}
-.kpi h3{margin:0;font-size:1.6rem}
-.kpi p{margin:6px 0 0 0;opacity:.8}
+.hero {
+  background: linear-gradient(135deg, #5b2cff 0%, #7a2df0 40%, #a82deb 100%);
+  border-radius: 14px; padding: 22px 24px; color: #fff; border: 1px solid rgba(255,255,255,0.08);
+}
+.hero h1 { margin: 0 0 6px 0; font-size: 34px; }
+.hero p { margin: 0; opacity: .92 }
+.chip {background:rgba(255,255,255,.12); padding:6px 10px;border-radius:100px;margin-right:8px;font-size:13px;display:inline-block}
+.result-card {border:1px solid rgba(255,255,255,.08); border-radius:12px; padding:16px; background:rgba(255,255,255,.02)}
+.small-btn {font-size:13px; padding:6px 10px; border-radius:10px}
+.sidecard {border:1px solid rgba(255,255,255,.08); border-radius:10px; padding:10px 12px; background:rgba(255,255,255,.02)}
+.ask-float {position: sticky; top: 10px;}
 </style>
 """
-st.markdown(HIDE, unsafe_allow_html=True)
+st.markdown(HIDE_STREAMLIT, unsafe_allow_html=True)
 
-# ------------ OpenAI client ------------
-API_KEY = st.secrets.get("OPENAI_API_KEY") or os.environ.get("OPENAI_API_KEY")
-if not API_KEY:
-    st.error("Missing OpenAI API key. Add it in Streamlit → Settings → Secrets (OPENAI_API_KEY).")
-    st.stop()
-client = OpenAI(api_key=API_KEY)
-MODEL = "gpt-4o-mini"  # text + vision capable
+# -------------------------------
+# SIDEBAR (compact)
+# -------------------------------
+with st.sidebar:
+    st.markdown("### 🔹 Progress")
+    c1, c2 = st.columns(2)
+    with c1: st.markdown(f"""<div class="sidecard"><b>{st.session_state.get('quiz_count',0)}</b><br/>Quizzes</div>""", unsafe_allow_html=True)
+    with c2: st.markdown(f"""<div class="sidecard"><b>{st.session_state.get('exam_count',0)}</b><br/>Mock Exams</div>""", unsafe_allow_html=True)
 
-def call_llm(messages, temperature=0.2, max_tokens=2000):
-    r = client.chat.completions.create(model=MODEL, messages=messages, temperature=temperature, max_tokens=max_tokens)
-    return r.choices[0].message.content.strip()
+    st.markdown("### 🕹️ Memory Boost")
+    with st.expander("Open game (optional)", expanded=False):
+        diff = st.radio("Difficulty", ["Easy", "Medium", "Hard"], horizontal=True)
+        target_secs = {"Easy": 30, "Medium": 45, "Hard": 60}[diff]
+        if st.button("Start Speed Recall"):
+            st.session_state["game_start"] = time.time()
+            st.session_state["game_target"] = target_secs
+            st.session_state["game_score"] = 0
+            st.session_state["game_word"] = None
+            st.rerun()
+        if "game_start" in st.session_state:
+            elapsed = int(time.time() - st.session_state["game_start"])
+            left = max(0, st.session_state["game_target"] - elapsed)
+            st.write(f"Time: **{left}s** | Score: **{st.session_state['game_score']}**")
+            word = st.session_state.get("game_word")
+            if not word:
+                # random short term to recall
+                seed = st.session_state.get("last_summary","") or st.session_state.get("last_outline","") or "photosynthesis DNA neuron enzyme mitosis"
+                choices = [w for w in seed.replace("\n"," ").split() if w.isalpha() and 4<=len(w)<=11]
+                random.shuffle(choices)
+                word = (choices[:1] or ["osmosis"])[0]
+                st.session_state["game_word"] = word
+            st.info(f"Type this quickly: **{word}**")
+            guess = st.text_input("Type here:", key="game_guess")
+            if st.button("Submit"):
+                if guess.strip().lower()==st.session_state["game_word"].lower():
+                    st.session_state["game_score"] += 1
+                st.session_state["game_word"] = None
+                st.session_state["game_guess"] = ""
+                st.rerun()
+            if left==0:
+                st.success(f"Time! Final score: {st.session_state['game_score']}")
+                for k in ["game_start","game_target","game_word","game_guess"]:
+                    st.session_state.pop(k, None)
 
-# ------------ Parsers ------------
-from pypdf import PdfReader
-from docx import Document
-
-def read_pdf_text(data: bytes) -> str:
-    out=[]
-    try:
-        reader=PdfReader(io.BytesIO(data))
-        for p in reader.pages:
-            out.append(p.extract_text() or "")
-    except Exception as e:
-        out.append(f"[PDF read error: {e}]")
-    return "\n".join(out)
-
-# Vision rendering (PDF → images) using pdf2image (requires poppler; on Streamlit Cloud it works if library present)
-# We'll try; if it fails, we gracefully fallback.
-def pdf_to_images(data: bytes, dpi=180, max_pages=8):
-    try:
-        from pdf2image import convert_from_bytes
-        imgs = convert_from_bytes(data, dpi=dpi, first_page=1, last_page=None)
-        if len(imgs)>max_pages: imgs = imgs[:max_pages]
-        return imgs
-    except Exception:
-        return []
-
-def read_docx_bytes(data: bytes) -> str:
-    try:
-        doc=Document(io.BytesIO(data))
-        return "\n".join(p.text for p in doc.paragraphs)
-    except Exception as e:
-        return f"[DOCX read error: {e}]"
-
-def normalize_notes(s: str) -> str:
-    s=s.replace("\r","\n")
-    s=re.sub(r"\n{3,}","\n\n",s)
-    return s.strip()
-
-def count_words(s: str) -> int:
-    return len(s.split())
-
-# ------------ Complexity & sizing ------------
-def complexity_profile(words:int)->Dict[str,int]:
-    if words<300:   return {"sum_words":180,"flash":12,"mcq":5,"mcq_opts":[3,5],"mcq_long_opts":[10],"short":2,"essay":1,"fib":4}
-    if words<1200:  return {"sum_words":280,"flash":20,"mcq":8,"mcq_opts":[5,10],"mcq_long_opts":[10],"short":4,"essay":1,"fib":6}
-    if words<3000:  return {"sum_words":400,"flash":28,"mcq":12,"mcq_opts":[5,10,15],"mcq_long_opts":[10,15],"short":6,"essay":2,"fib":10}
-    return {"sum_words":650,"flash":40,"mcq":18,"mcq_opts":[10,15],"mcq_long_opts":[15],"short":8,"essay":3,"fib":14}
-
-# ------------ PDF export (FPDF lightweight) ------------
-from fpdf import FPDF
-def to_pdf_bytes(title:str, md:str)->bytes:
-    txt=re.sub(r"[#*_>`]{1,3}","",md).replace("•","-")
-    pdf=FPDF(); pdf.set_auto_page_break(True,15); pdf.add_page()
-    pdf.set_font("Arial","B",16); pdf.multi_cell(0,10,title); pdf.ln(3)
-    pdf.set_font("Arial","",11)
-    for line in txt.split("\n"):
-        pdf.multi_cell(0,7,line)
-    buf=io.BytesIO(); pdf.output(buf); return buf.getvalue()
-
-# ------------ Vision helpers ------------
-def pil_to_base64(pil_img):
-    buf=io.BytesIO(); pil_img.save(buf, format="PNG"); b=buf.getvalue()
-    return base64.b64encode(b).decode("utf-8")
-
-def vision_extract_pages(pil_images:List, instruction:str)->str:
-    """Send up to N page images to the model with instruction; returns stitched text notes."""
-    if not pil_images: return ""
-    msgs=[{"role":"system","content":"You are an expert at reading diagrams, screenshots and slides. Extract accurate, well-structured text."},
-          {"role":"user","content":[{"type":"text","text":instruction}]+[
-              {"type":"image_url","image_url":{"url":f"data:image/png;base64,{pil_to_base64(img)}"}} for img in pil_images
-          ]}]
-    return call_llm(msgs, temperature=0.1, max_tokens=2000)
-
-# ------------ Session ------------
-SS=st.session_state
-SS.setdefault("quiz_hist",[])
-SS.setdefault("exam_hist",[])
-SS.setdefault("chat",[])
-
-# ------------ HERO ------------
-st.markdown("""
+# -------------------------------
+# HERO
+# -------------------------------
+st.markdown(
+    """
 <div class="hero">
-  <h1>⚡ Zentra</h1>
-  <p>Smarter notes. Better recall. Higher scores.</p>
-  <div>
-    <span class="pill">Summaries</span>
-    <span class="pill">Flashcards</span>
-    <span class="pill">Quizzes</span>
-    <span class="pill">Mock Exams</span>
-    <span class="pill">Ask Zentra</span>
+  <h1>⚡ Zentra — AI Study Buddy</h1>
+  <p>Smarter notes → faster recall → higher scores. Upload or paste your notes; Zentra builds summaries, flashcards, quizzes, and mock exams — plus a tutor you can chat with.</p>
+  <div style="margin-top:10px">
+    <span class="chip">Summaries</span>
+    <span class="chip">Flashcards</span>
+    <span class="chip">Quizzes</span>
+    <span class="chip">Mock Exams</span>
+    <span class="chip">Ask Zentra</span>
   </div>
 </div>
-""", unsafe_allow_html=True)
+""",
+    unsafe_allow_html=True,
+)
 
-# ------------ INPUT ------------
-st.subheader("Upload your notes (PDF / DOCX / TXT) or paste below")
-c_up1, c_up2 = st.columns([1.2,1])
-with c_up1:
-    up = st.file_uploader(" ", type=["pdf","docx","txt"], label_visibility="collapsed")
-with c_up2:
-    paste = st.text_area(" ", placeholder="Or paste your notes here…", height=150, label_visibility="collapsed")
+# -------------------------------
+# INPUTS
+# -------------------------------
+st.markdown("### Upload your notes (PDF / DOCX / TXT) **or** paste below")
 
-source_text=""
-analysis_mode="text"
-pdf_images=[]
+col_up, col_name = st.columns([3,2])
+with col_up:
+    uploaded = st.file_uploader("Drag & drop or browse", type=["pdf","docx","txt"], label_visibility="collapsed")
+with col_name:
+    mode = st.radio("Analysis mode", ["Text only (cheaper)","Include images (vision)"], horizontal=True)
 
-if up is not None:
-    data = up.read()
-    name = up.name.lower()
-    if name.endswith(".pdf"):
-        # ask for analysis mode
-        analysis_mode = st.radio("Choose how to process your PDF:", ["📝 Text-only (faster)","👁️ Vision (covers images/diagrams)"], index=0, horizontal=True)
-        if analysis_mode.startswith("📝"):
-            source_text = read_pdf_text(data)
-            analysis_mode="text"
-        else:
-            # text + attempt vision images
-            text_only = read_pdf_text(data)
-            images = pdf_to_images(data, dpi=180, max_pages=8)
-            extracted = ""
-            if images:
-                with st.spinner("Analyzing images/diagrams (Vision)…"):
-                    extracted = vision_extract_pages(images, "Extract all text content, labels, bullet points and important relationships from these pages.")
-                    pdf_images = images
-            source_text = (text_only + "\n\n" + extracted).strip()
-            analysis_mode="vision"
-    elif name.endswith(".docx"):
-        source_text = read_docx_bytes(data)
-    else:
+notes = st.text_area("Paste notes here if you aren't uploading a file...", height=180)
+if uploaded and not notes.strip():
+    with st.spinner("Extracting text…"):
         try:
-            source_text = data.decode("utf-8", errors="ignore")
-        except:
-            source_text = ""
-else:
-    source_text = paste
+            notes = extract_text(uploaded)
+        except Exception as e:
+            st.warning("Could not read the file. Try .pdf/.docx/.txt.")
+            notes = ""
 
-source_text = normalize_notes(source_text)
-words = count_words(source_text)
-profile = complexity_profile(words)
+if not notes.strip():
+    st.info("Upload a file **or** paste notes to get started.")
+    st.stop()
 
-if not source_text:
-    st.info("Upload a file or paste notes to get started.")
+# Basic derived metrics
+word_count = len(notes.split())
+flash_count, mcq_count = pick_counts_by_length(word_count)
 
-# ------------ MAIN TABS ------------
-tabs = st.tabs(["📄 Summaries","🔑 Flashcards","🎯 Quiz","📝 Mock Exam","💬 Ask Zentra"])
+# -------------------------------
+# TABS: core features + Ask Zentra
+# -------------------------------
+tab_sum, tab_cards, tab_quiz, tab_exam, tab_ask = st.tabs(["🟣 Summaries", "🟡 Flashcards", "🔴 Quiz", "🟢 Mock Exam", "💬 Ask Zentra"])
 
-# --- Summaries ---
-with tabs[0]:
-    if st.button("✨ Generate Summary", disabled=not source_text, key="btn_sum"):
+# ===== SUMMARY =====
+with tab_sum:
+    st.markdown("#### Summary")
+    st.caption("Zentra writes focused, exam-ready summaries (not fluffy).")
+    if st.button("✨ Generate Summary", type="primary"):
         with st.spinner("Summarizing…"):
-            sys="You are an expert study coach. Produce compact, accurate study summaries aligned to exams."
-            user=f"""Summarize the notes in ~{profile['sum_words']} words.
-- Use headings and bullet points.
-- Include key terms, definitions, formulas, dates, cause→effect.
-- If the notes came from slides/images (vision), integrate that info too.
-NOTES:
-{source_text}"""
-            summary = call_llm([{"role":"system","content":sys},{"role":"user","content":user}], temperature=0.2, max_tokens=2000)
-        st.markdown(summary)
-        c1,c2=st.columns(2)
-        with c1: st.download_button("📥 Download PDF", data=to_pdf_bytes("Summary", summary), file_name="zentra_summary.pdf", mime="application/pdf")
-        with c2: st.download_button("📥 Download TXT", data=summary, file_name="zentra_summary.txt")
+            # If vision later: call multimodal here for images
+            summary = safe_chat(
+                "You produce tight, clearly formatted study summaries.",
+                f"Summarize the following *comprehensively but concise*, use headings & bullets where helpful:\n\n{notes[:16000]}"
+            )
+        st.session_state["last_summary"] = summary
+        st.session_state["last_outline"] = outline_from_text(notes)
+        st.markdown(f'<div class="result-card">{summary}</div>', unsafe_allow_html=True)
 
-# --- Flashcards (auto-sized) ---
-with tabs[1]:
-    st.caption("AI decides how many cards fully cover your content.")
-    if st.button("🔑 Generate Flashcards", disabled=not source_text, key="btn_fc"):
-        with st.spinner("Generating flashcards…"):
-            sys="You create excellent two-sided flashcards that maximize active recall."
-            user=f"""Create approximately {profile['flash']} high-quality flashcards that cover ALL core concepts from the notes.
-Output in clean Markdown list with **Q:** and **A:** pairs. Avoid duplicates; ensure broad coverage.
+        # Download
+        pdf_bytes = make_pdf_bytes("Zentra Summary", [summary])
+        st.download_button("⬇️ Download summary (PDF/TXT)", data=pdf_bytes, file_name="zentra_summary.pdf", mime="application/pdf")
 
-NOTES:
-{source_text}"""
-            cards_md = call_llm([{"role":"system","content":sys},{"role":"user","content":user}], temperature=0.2, max_tokens=3000)
-        st.markdown("#### Flashcards")
-        st.markdown(cards_md)
-        c1,c2=st.columns(2)
-        with c1: st.download_button("📥 Download PDF", data=to_pdf_bytes("Flashcards", cards_md), file_name="zentra_flashcards.pdf", mime="application/pdf")
-        with c2: st.download_button("📥 Download TXT", data=cards_md, file_name="zentra_flashcards.txt")
+        # Context helper
+        with st.popover("Ask Zentra about this summary"):
+            ask_q = st.text_input("Type a question about the summary:")
+            if st.button("Ask (summary context)"):
+                resp = safe_chat(
+                    "Answer as a helpful tutor using the provided context.",
+                    f"Context:\n{summary}\n\nQuestion: {ask_q}"
+                )
+                st.write(resp)
 
-# --- Quiz (few size options by length) ---
-with tabs[2]:
-    st.caption("Quick MCQs to check understanding (different pool than Mock Exam).")
-    # options depend on note length
-    if words<300:
-        options=[3,5]
-    elif words<1200:
-        options=[5,10]
-    elif words<3000:
-        options=[5,10,15]
-    else:
-        options=[10,15]
-    n = st.radio("How big should the quiz be?", options, index=0, horizontal=True, disabled=not source_text)
-    if st.button("🎯 Start Quiz", disabled=not source_text, key="btn_quiz"):
-        with st.spinner("Generating quiz…"):
-            sys="You are a strict test maker. Generate exam-quality single-answer MCQs with clear distractors."
-            user=f"""Create {n} unique MCQs from the notes below.
-- Output in Markdown with numbering.
-- Each item: question + 4 options (A–D).
-- Put the answer key and 1–2 sentence explanations at the end.
-- Ensure this set is DIFFERENT from any mock exam that might be generated.
+# ===== FLASHCARDS =====
+with tab_cards:
+    st.markdown("#### Flashcards")
+    st.caption("Counts are auto-sized to your note length.")
+    if st.button(f"🗝️ Make ~{flash_count} flashcards"):
+        with st.spinner("Building flashcards…"):
+            fc = safe_chat(
+                "Create clean flashcards as Q: ... / A: ... one per line.",
+                f"Make about {flash_count} **high-yield** flashcards that cover all key facts from these notes:\n\n{notes[:16000]}\n\nFormat strictly as:\nQ: ...\nA: ...\nQ: ...\nA: ..."
+            )
+        st.session_state["last_flashcards"] = fc
+        st.text(fc)
+        pdf_bytes = make_pdf_bytes("Zentra Flashcards", fc.splitlines())
+        st.download_button("⬇️ Download flashcards (PDF/TXT)", data=pdf_bytes, file_name="zentra_flashcards.pdf", mime="application/pdf")
 
-NOTES:
-{source_text}"""
-            quiz_md = call_llm([{"role":"system","content":sys},{"role":"user","content":user}], temperature=0.25, max_tokens=2500)
-        st.markdown(quiz_md)
-        SS.quiz_hist.append({"ts":int(time.time()),"n":n,"title":"Quiz"})
-        c1,c2=st.columns(2)
-        with c1: st.download_button("📥 Download PDF", data=to_pdf_bytes("Quiz", quiz_md), file_name="zentra_quiz.pdf", mime="application/pdf")
-        with c2: st.download_button("📥 Download TXT", data=quiz_md, file_name="zentra_quiz.txt")
+        with st.popover("Ask Zentra about these flashcards"):
+            ask_q = st.text_input("Question about a card?")
+            if st.button("Ask (flashcards context)"):
+                resp = safe_chat("Tutor with context", f"Flashcards:\n{fc}\n\nQuestion: {ask_q}")
+                st.write(resp)
 
-# --- Mock Exam (scaled, graded /100) ---
-with tabs[3]:
-    diff = st.select_slider("Difficulty", options=["Easy","Standard","Hard"], value="Standard", disabled=not source_text)
-    if st.button("📝 Generate Mock Exam", disabled=not source_text, key="btn_exam"):
-        with st.spinner("Composing your mock exam…"):
-            # scale counts from profile + difficulty multiplier
-            mult=1.0 + (0.15 if diff=="Hard" else (-0.1 if diff=="Easy" else 0))
-            counts={
-                "mcq":  max(6, math.ceil(profile["mcq"]*mult)),
-                "fib":  max(4, math.ceil(profile["fib"]*mult)),
-                "short":max(2, math.ceil(profile["short"]*mult)),
-                "essay":max(1, math.ceil(profile["essay"]*mult)),
-            }
-            sys="You are an expert examiner. Create rigorous but fair mock exams. Grade to 100."
-            user=f"""Create a **Mock Exam** from the notes with the following sections (DIFFERENT bank than Quiz):
+# ===== QUIZ =====
+with tab_quiz:
+    st.markdown("#### Quiz")
+    size = "Short" if word_count<800 else ("Standard" if word_count<2500 else "Long")
+    st.caption(f"Auto-sized for your notes: **{size}** quiz.")
 
-**Sections**
-1) MCQs: {counts['mcq']} questions, 4 options (A–D).
-2) Fill-in-the-blank: {counts['fib']} items (one-word/phrase).
-3) Short Answers: {counts['short']} questions (2–4 sentences) with **model answers**.
-4) Long Answer(s): {counts['essay']} prompts with **model answer** (5–10 bullet points).
+    diff = st.radio("Difficulty", ["Easy","Standard","Challenging"], horizontal=True)
+    if st.button(f"🎯 Generate {size} Quiz"):
+        qs = {"Short": mcq_count//2, "Standard": mcq_count, "Long": mcq_count + 8}[size]
+        with st.spinner("Generating quiz MCQs…"):
+            quiz = safe_chat(
+                "Create multiple-choice questions. Provide answer key at the end.",
+                f"Build **{qs}** high-quality MCQs from the notes. 4 options each (A–D), one correct. Mix conceptual & applied. Then an answer key.\n\nNotes:\n{notes[:16000]}"
+            )
+        st.session_state["quiz_count"] = st.session_state.get("quiz_count",0)+1
+        st.session_state["last_quiz"] = quiz
+        st.markdown(f'<div class="result-card" style="white-space:pre-wrap">{quiz}</div>', unsafe_allow_html=True)
+        pdf_bytes = make_pdf_bytes("Zentra Quiz", quiz.splitlines())
+        st.download_button("⬇️ Download quiz (PDF/TXT)", data=pdf_bytes, file_name="zentra_quiz.pdf", mime="application/pdf")
 
-**After the exam**, include:
-- **Answer Key** for MCQ + FIB.
-- **Marking Scheme** that totals **/100** (allocate marks across sections).
-- **How to Self-Mark** short/long answers (concise rubric).
-- **Personalized Feedback Template** (strengths, weak areas, next steps).
+        with st.popover("Ask Zentra about this quiz"):
+            q = st.text_input("Confused about a question?")
+            if st.button("Explain (quiz context)"):
+                ans = safe_chat("Explain clearly with steps", f"Quiz:\n{quiz}\n\nExplain: {q}")
+                st.write(ans)
 
-Ensure broad coverage (especially if notes came from slides/diagrams via Vision).
-NOTES:
-{source_text}"""
-            exam_md = call_llm([{"role":"system","content":sys},{"role":"user","content":user}], temperature=0.25, max_tokens=4000)
-        st.markdown(exam_md)
-        SS.exam_hist.append({"ts":int(time.time()),"title":"Mock Exam","diff":diff,"counts":counts,"max":100})
-        c1,c2=st.columns(2)
-        with c1: st.download_button("📥 Download PDF", data=to_pdf_bytes("Mock Exam", exam_md), file_name="zentra_mock_exam.pdf", mime="application/pdf")
-        with c2: st.download_button("📥 Download TXT", data=exam_md, file_name="zentra_mock_exam.txt")
+# ===== MOCK EXAM =====
+with tab_exam:
+    st.markdown("#### Mock Exam")
+    exam_level = st.radio("Mode", ["Easy", "Standard", "Difficult"], horizontal=True)
 
-# --- Ask Zentra ---
-with tabs[4]:
-    st.caption("Ask anything about your uploaded notes — or general study help.")
-    # sample chips
-    chips = st.columns(4)
-    samples = [
-        "Make me a 7-day study plan from these notes.",
-        "Explain the 3 most testable concepts with examples.",
-        "Create a quick cram sheet for exam morning.",
-        "Give me memory hooks (mnemonics) for key terms."
-    ]
-    for i,s in enumerate(samples):
-        if chips[i].button(s, key=f"chip_{i}"): SS.chat.append({"role":"user","content":s})
+    if st.button("📝 Build Mock Exam"):
+        # scale sections by notes length + difficulty
+        base_mcq = {"Easy": 8, "Standard": 14, "Difficult": 20}[exam_level]
+        mult = 1 if word_count<1200 else (1.4 if word_count<3500 else 1.8)
+        mcqs = int(base_mcq*mult)
 
-    q = st.text_input("Ask Zentra…", placeholder="e.g., Compare mitosis vs meiosis in a table")
-    c1,c2=st.columns([1,.35])
-    send = c1.button("💬 Send", use_container_width=True)
-    clr  = c2.button("🧹 Clear", use_container_width=True)
-    if clr: SS.chat=[]
+        short_n = int(0.4*mcqs)
+        long_n  = 2 if exam_level=="Easy" else (3 if exam_level=="Standard" else 4)
 
-    if (q and send): SS.chat.append({"role":"user","content":q})
+        with st.spinner("Composing full mock exam…"):
+            exam = safe_chat(
+                "You are an assessment designer. Return a professional mock exam.",
+                f"""
+Create a **mock exam** from the notes with these sections:
+- Section A: {mcqs} MCQs (A–D), different from any earlier quiz ideas.
+- Section B: {short_n} Short-Answer items (2–4 lines).
+- Section C: {long_n} Long-Answer prompts requiring structured explanations.
 
-    if SS.chat and SS.chat[-1]["role"]=="user":
-        with st.spinner("Zentra is thinking…"):
-            msgs=[{"role":"system","content":"You are Zentra, a precise, friendly study tutor. Use the student's notes if provided."}]
-            if source_text:
-                msgs.append({"role":"system","content":f"Student notes (context):\n{source_text[:15000]}"})
-            msgs+=SS.chat
-            ans = call_llm(msgs, temperature=0.2, max_tokens=1200)
-        SS.chat.append({"role":"assistant","content":ans})
+Provide:
+1) Exam paper (clean formatting, section headers, points per item; total 100 points).
+2) Answer key & marking guide with point splits.
+3) Personalized revision advice at the end.
 
-    for turn in SS.chat:
-        if turn["role"]=="user":
-            st.markdown(f'<div class="bubble user"><b>You</b>: {turn["content"]}</div>', unsafe_allow_html=True)
-        else:
-            st.markdown(f'<div class="bubble assistant"><b>Zentra</b>: {turn["content"]}</div>', unsafe_allow_html=True)
+Notes:
+{notes[:16000]}
+"""
+            )
+        st.session_state["exam_count"] = st.session_state.get("exam_count",0)+1
+        st.session_state["last_exam"] = exam
+        st.markdown(f'<div class="result-card" style="white-space:pre-wrap">{exam}</div>', unsafe_allow_html=True)
+        pdf_bytes = make_pdf_bytes("Zentra Mock Exam", exam.splitlines())
+        st.download_button("⬇️ Download mock exam (PDF/TXT)", data=pdf_bytes, file_name="zentra_mock_exam.pdf", mime="application/pdf")
 
-# ------------ SIDEBAR: Progress + Games ------------
-with st.sidebar:
-    st.subheader("📊 Progress")
-    c1,c2 = st.columns(2)
-    with c1:
-        st.markdown(f'<div class="kpi"><h3>{len(SS.quiz_hist)}</h3><p>Quizzes</p></div>', unsafe_allow_html=True)
-    with c2:
-        st.markdown(f'<div class="kpi"><h3>{len(SS.exam_hist)}</h3><p>Mock Exams</p></div>', unsafe_allow_html=True)
+        with st.popover("Ask Zentra about this exam"):
+            q = st.text_input("Ask about a section or marking:")
+            if st.button("Explain (exam context)"):
+                ans = safe_chat("Explain as tutor with rubric", f"Exam:\n{exam}\n\nExplain: {q}")
+                st.write(ans)
 
-    st.markdown("**Quiz History**")
-    if not SS.quiz_hist:
-        st.caption("No quizzes yet.")
-    else:
-        for qh in SS.quiz_hist[::-1]:
-            ts=time.strftime("%Y-%m-%d %H:%M", time.localtime(qh["ts"]))
-            st.write(f"- {qh['n']} MCQs · _{ts}_")
+# ===== ASK ZENTRA (dedicated)
+with tab_ask:
+    st.markdown("#### Ask Zentra")
+    st.caption("A focused chat tutor. It can also use your latest summary/quiz/exam as context.")
+    col_sug, col_chat = st.columns([1,2])
+    with col_sug:
+        st.markdown("**Try one:**")
+        if st.button("Make a 7-day study plan"):
+            st.session_state["ask_prompt"]="Make a 7-day study plan for these notes."
+        if st.button("Explain this concept simply"):
+            st.session_state["ask_prompt"]="Explain the main concept in simple terms with examples."
+        if st.button("Drill me with quick questions"):
+            st.session_state["ask_prompt"]="Create 10 rapid-fire questions with answers."
+        if st.button("Revise fast in 10 bullets"):
+            st.session_state["ask_prompt"]="Summarize key ideas in 10 bullets for quick revision."
 
-    st.markdown("**Mock Exam History**")
-    if not SS.exam_hist:
-        st.caption("No mock exams yet.")
-    else:
-        for eh in SS.exam_hist[::-1]:
-            ts=time.strftime("%Y-%m-%d %H:%M", time.localtime(eh["ts"]))
-            c=eh["counts"]; st.write(f"- {eh['diff']} · MCQ {c['mcq']}, FIB {c['fib']}, SA {c['short']}, Essay {c['essay']} · _{ts}_")
-
-    st.divider()
-    st.subheader("🎮 Memory Boost Games")
-
-    game = st.selectbox("Choose a game", ["🧠 Memory Grid","⚡ Speed Tap Recall"])
-
-    # Game 1: Memory Grid (simple)
-    if game=="🧠 Memory Grid":
-        size = st.slider("Grid size", 3, 6, 4)
-        show_sec = st.slider("Show time (sec)", 1, 5, 2)
-        if "grid_seq" not in SS: SS.grid_seq=[]
-        if st.button("Start Round"):
-            import random
-            SS.grid_seq=[(random.randrange(size), random.randrange(size)) for _ in range(max(3, size))]
-            SS.grid_revealed=True
-            SS.grid_clicks=[]
-            SS.grid_started=time.time()
-        if "grid_revealed" in SS and SS.grid_seq:
-            # draw grid
-            cols = st.columns(size)
-            for r in range(size):
-                for c in range(size):
-                    lab = " "
-                    if SS.get("grid_revealed"):
-                        if (r,c) in SS.grid_seq: lab="●"
-                    if cols[c].button(lab, key=f"g{r}-{c}"):
-                        if not SS.get("grid_revealed"):
-                            SS.grid_clicks.append((r,c))
-            if SS.get("grid_revealed") and (time.time()-SS.grid_started)>=show_sec:
-                SS.grid_revealed=False
-                st.info("Now repeat the pattern in order!")
-            if not SS.get("grid_revealed") and len(SS.get("grid_clicks",[]))>=len(SS.grid_seq)>0:
-                st.write("Your input:", SS.grid_clicks)
-                st.write("Target:", SS.grid_seq)
-                st.success("Great memory!" if SS.grid_clicks==SS.grid_seq else "Keep training!")
-
-    # Game 2: Speed Tap Recall (word association)
-    if game=="⚡ Speed Tap Recall":
-        if "tap_score" not in SS: SS.tap_score=0
-        if "tap_word" not in SS: SS.tap_word=""
-        vocab = ["osmosis","momentum","mitosis","inflation","photosynthesis","equilibrium","derivative","entropy"]
-        colg1,colg2=st.columns([1,.6])
-        with colg1:
-            if st.button("Start/Next"):
-                import random
-                SS.tap_word=random.choice(vocab)
-                SS.tap_score=SS.tap_score
-        st.write(f"Word: **{SS.tap_word or '—'}**")
-        ans = st.text_input("Type a related concept/definition (3s speed!)", value="")
-        if st.button("Check"):
-            if SS.tap_word:
-                # quick relevance via LLM (low token)
-                msg=[{"role":"system","content":"Check if the student's response is relevant to the cue word (yes/no only)."},
-                     {"role":"user","content":f"Cue: {SS.tap_word}\nResponse: {ans}\nAnswer 'yes' if clearly related; else 'no'."}]
-                ok = call_llm(msg, temperature=0, max_tokens=5).lower()
-                if "yes" in ok:
-                    SS.tap_score+=1; st.success("Nice! +1")
-                else:
-                    st.warning("Not quite—try again.")
-        st.write(f"Score: **{SS.tap_score}**")
-
-    st.divider()
-    with st.expander("Disclaimer"):
-        st.caption("Zentra is an AI assistant. Verify outputs with your syllabus/instructor. Vision mode may increase token usage.")
+    with col_chat:
+        default = st.session_state.get("ask_prompt","")
+        user_q = st.text_area("Your question for Zentra", value=default, height=100)
+        use_ctx = st.checkbox("Use my latest outputs as context (summary/quiz/exam)")
+        if st.button("💬 Ask Zentra", type="primary"):
+            context_blobs = []
+            if use_ctx:
+                for k in ["last_summary","last_quiz","last_exam"]:
+                    if k in st.session_state:
+                        context_blobs.append(st.session_state[k])
+            ctx = "\n\n".join(context_blobs) if context_blobs else "(no context)"
+            ans = safe_chat(
+                "Be a precise, friendly study tutor.",
+                f"Context (optional):\n{ctx}\n\nUser question:\n{user_q}"
+            )
+            st.markdown(f'<div class="result-card">{ans}</div>', unsafe_allow_html=True)
