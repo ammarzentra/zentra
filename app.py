@@ -1,168 +1,186 @@
 import streamlit as st
 from openai import OpenAI
-import fitz  # PyMuPDF
+from PyPDF2 import PdfReader
 import docx
-from fpdf import FPDF
+import base64
 
-# ===================== SETUP =====================
-st.set_page_config(page_title="⚡ Zentra — AI Study Buddy", layout="wide")
+# Initialize OpenAI client
 client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
-MODEL = "gpt-4o-mini"
 
-# ===================== CUSTOM CSS =====================
+# -------------- APP CONFIG --------------
+st.set_page_config(page_title="⚡ Zentra — AI Study Buddy", layout="wide")
+
+# Custom CSS to polish UI + hide Streamlit footer
 st.markdown("""
     <style>
-        #MainMenu, footer, header {visibility: hidden;}
-        .zentra-header {
+        #MainMenu {visibility: hidden;}
+        footer {visibility: hidden;}
+        header {visibility: hidden;}
+
+        /* Gradient Hero Section */
+        .hero {
             background: linear-gradient(90deg, #6a11cb, #2575fc);
-            padding: 25px;
+            color: white;
+            padding: 30px;
             border-radius: 12px;
             text-align: center;
-            color: white;
+            margin-bottom: 20px;
         }
-        .zentra-header h1 { font-size: 40px; margin: 0; font-weight: bold; }
-        .zentra-header p { font-size: 16px; margin-top: 8px; opacity: 0.9; }
-        .stButton>button { width: 100%; border-radius: 8px; font-weight: 600; padding: 10px; }
+        .hero h1 {
+            font-size: 36px;
+            font-weight: bold;
+        }
+        .hero p {
+            font-size: 18px;
+            opacity: 0.9;
+        }
+
+        /* Floating Ask Zentra button (top right) */
+        .ask-button {
+            position: fixed;
+            top: 20px;
+            right: 30px;
+            background: #ffb703;
+            color: black;
+            padding: 10px 20px;
+            border-radius: 25px;
+            font-weight: bold;
+            cursor: pointer;
+            z-index: 1000;
+        }
         .chatbox {
-            position: fixed; bottom: 20px; right: 20px;
-            width: 350px; height: 450px;
-            background: #1e1e2f; border-radius: 10px;
-            padding: 12px; overflow-y: auto;
-            color: white; font-size: 14px;
+            position: fixed;
+            top: 70px;
+            right: 30px;
+            width: 300px;
+            height: 400px;
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0px 4px 20px rgba(0,0,0,0.2);
+            display: none;
+            flex-direction: column;
+            overflow: hidden;
+            z-index: 1001;
+        }
+        .chat-messages {
+            flex: 1;
+            padding: 10px;
+            overflow-y: auto;
+            font-size: 14px;
+        }
+        .chat-input {
+            border-top: 1px solid #ddd;
+            padding: 8px;
         }
     </style>
+
+    <script>
+        function toggleChat() {
+            var chat = document.getElementById("zentra-chat");
+            if (chat.style.display === "none") {
+                chat.style.display = "flex";
+            } else {
+                chat.style.display = "none";
+            }
+        }
+    </script>
 """, unsafe_allow_html=True)
 
-# ===================== HEADER =====================
+# -------------- HERO SECTION --------------
 st.markdown("""
-    <div class="zentra-header">
+    <div class="hero">
         <h1>⚡ Zentra — AI Study Buddy</h1>
         <p>Smarter notes → better recall → higher scores.</p>
+        <div style="margin-top:15px;">
+            <button disabled style="margin:5px;padding:10px 20px;border-radius:8px;">📑 Summaries</button>
+            <button disabled style="margin:5px;padding:10px 20px;border-radius:8px;">🗂 Flashcards</button>
+            <button disabled style="margin:5px;padding:10px 20px;border-radius:8px;">🎯 Quizzes</button>
+            <button disabled style="margin:5px;padding:10px 20px;border-radius:8px;">📝 Mock Exams</button>
+        </div>
     </div>
 """, unsafe_allow_html=True)
 
-# ===================== SIDEBAR =====================
-st.sidebar.title("📌 About Zentra")
-st.sidebar.success("""
-**How Zentra Works:**  
-Upload notes → Generate summaries, flashcards, quizzes, and mock exams.  
-Ask Zentra anytime like a study tutor.  
+# Floating Ask Zentra Button
+st.markdown('<div class="ask-button" onclick="toggleChat()">💬 Ask Zentra</div>', unsafe_allow_html=True)
 
-**Why Students Love It:**  
-✅ Faster revision  
-✅ Adaptive practice  
-✅ Smart AI explanations  
-""")
+# Chatbox HTML
+st.markdown("""
+    <div id="zentra-chat" class="chatbox">
+        <div class="chat-messages" id="chat-messages">
+            <p><b>Zentra:</b> Hi 👋 I’m your AI tutor. Ask me anything about your notes!</p>
+        </div>
+        <div class="chat-input">
+            <input type="text" id="chat-input" placeholder="Type your question..." style="width:80%">
+            <button onclick="document.getElementById('chat-messages').innerHTML += '<p><b>You:</b> ' + document.getElementById('chat-input').value + '</p>';">Send</button>
+        </div>
+    </div>
+""", unsafe_allow_html=True)
 
-st.sidebar.markdown("### 🛠 What each tool does")
-st.sidebar.info("""
-📑 **Summaries** → Exam-ready notes  
-🃏 **Flashcards** → Active recall Q&A  
-🎯 **Quizzes** → Adaptive MCQs with answers  
-📝 **Mock Exams** → Full-length exam with marking  
-💬 **Ask Zentra** → Chat with AI tutor  
-""")
+# -------------- SIDEBAR --------------
+with st.sidebar:
+    st.subheader("📘 About Zentra")
+    st.write("Zentra accelerates learning with clean summaries, active-recall flashcards, adaptive quizzes, mock exams, and a built-in AI tutor.")
 
-st.sidebar.markdown("---")
-st.sidebar.markdown("### ⚠ Disclaimer")
-st.sidebar.warning("Zentra is an AI-powered assistant. Always review results before relying on them for exams.")
+    st.subheader("🛠 What each tool does")
+    st.write("📑 **Summaries** → exam-ready notes")
+    st.write("🗂 **Flashcards** → spaced repetition questions")
+    st.write("🎯 **Quizzes** → MCQs with explanations")
+    st.write("📝 **Mock Exams** → multi-section exam with marking")
+    st.write("💬 **Ask Zentra** → your AI tutor/chat")
 
-# ===================== FILE UPLOAD =====================
-st.subheader("📂 Upload your notes (PDF / DOCX / TXT) or paste below")
+    st.subheader("⚡ Disclaimer")
+    st.write("Zentra supports your study journey. Always verify before exams.")
+
+# -------------- MAIN APP --------------
+st.subheader("📂 Upload your notes (PDF / DOCX / TXT)")
 uploaded_file = st.file_uploader("Upload file", type=["pdf", "docx", "txt"])
-notes_text = st.text_area("Or paste your notes here…", height=150)
 
 def extract_text(file):
-    text = ""
     if file.name.endswith(".pdf"):
-        pdf = fitz.open(stream=file.read(), filetype="pdf")
-        for page in pdf:
-            text += page.get_text()
+        pdf = PdfReader(file)
+        return " ".join([page.extract_text() for page in pdf.pages if page.extract_text()])
     elif file.name.endswith(".docx"):
         doc = docx.Document(file)
-        for para in doc.paragraphs:
-            text += para.text + "\n"
+        return " ".join([para.text for para in doc.paragraphs])
+    elif file.name.endswith(".txt"):
+        return file.read().decode("utf-8")
     else:
-        text = file.read().decode("utf-8")
-    return text
+        return ""
 
 if uploaded_file:
-    notes_text = extract_text(uploaded_file)
+    text = extract_text(uploaded_file)
 
-# ===================== HELPERS =====================
-def ask_openai(prompt):
-    resp = client.chat.completions.create(
-        model=MODEL,
-        messages=[
-            {"role": "system", "content": "You are Zentra, a professional AI study assistant."},
-            {"role": "user", "content": prompt}
-        ]
-    )
-    return resp.choices[0].message.content
+    st.subheader("✨ Study Tools")
 
-def save_as_pdf(content, title="Zentra Output"):
-    pdf = FPDF()
-    pdf.add_page()
-    pdf.set_font("Arial", size=12)
-    pdf.multi_cell(0, 10, content)
-    return pdf.output(dest="S").encode("latin-1")
-
-# ===================== WELCOME =====================
-if "first_time" not in st.session_state:
-    st.session_state["first_time"] = True
-
-if st.session_state["first_time"]:
-    st.info("👋 Welcome to Zentra! Upload your notes and let AI transform them into study material.")
-    st.session_state["first_time"] = False
-
-# ===================== TOOLS =====================
-st.subheader("✨ Study Tools")
-
-col1, col2, col3, col4 = st.columns(4)
-
-with col1:
-    if st.button("📑 Summaries") and notes_text.strip():
-        summary = ask_openai(f"Summarize in exam-style bullet points:\n{notes_text}")
-        st.success("✅ Summary Generated")
+    if st.button("📑 Summarize Notes"):
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "system", "content": "Summarize the notes into exam-ready bullet points."},
+                      {"role": "user", "content": text}]
+        )
+        summary = response.choices[0].message.content
         st.write(summary)
-        st.download_button("⬇️ Download PDF", save_as_pdf(summary), file_name="summary.pdf")
 
-with col2:
-    if st.button("🃏 Flashcards") and notes_text.strip():
-        cards = ask_openai(f"Make 15 flashcards (Q front, A back):\n{notes_text}")
-        st.success("✅ Flashcards Generated")
-        st.write(cards)
-        st.download_button("⬇️ Download PDF", save_as_pdf(cards), file_name="flashcards.pdf")
+    if st.button("🗂 Generate Flashcards"):
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "system", "content": "Make flashcards: Question → Answer format."},
+                      {"role": "user", "content": text}]
+        )
+        st.write(response.choices[0].message.content)
 
-with col3:
-    if st.button("🎯 Quizzes") and notes_text.strip():
-        quiz = ask_openai(f"Generate adaptive MCQs with answers and explanations:\n{notes_text}")
-        st.success("✅ Quiz Generated")
-        st.write(quiz)
-        st.download_button("⬇️ Download PDF", save_as_pdf(quiz), file_name="quiz.pdf")
+    if st.button("🎯 Generate Quiz"):
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "system", "content": "Generate 10 multiple-choice questions with 4 options and correct answer marked."},
+                      {"role": "user", "content": text}]
+        )
+        st.write(response.choices[0].message.content)
 
-with col4:
-    if st.button("📝 Mock Exams") and notes_text.strip():
-        exam = ask_openai(f"Create a professional mock exam (MCQs + short answer + essay + marking):\n{notes_text}")
-        st.success("✅ Mock Exam Generated")
-        st.write(exam)
-        st.download_button("⬇️ Download PDF", save_as_pdf(exam), file_name="mock_exam.pdf")
-
-# ===================== ASK ZENTRA CHATBOX =====================
-if "chat" not in st.session_state:
-    st.session_state["chat"] = []
-
-st.markdown("## 💬 Ask Zentra (Tutor)")
-user_q = st.text_input("Ask anything about your notes or subject:")
-if st.button("Send Question") and user_q:
-    ans = ask_openai(user_q)
-    st.session_state["chat"].append(("You", user_q))
-    st.session_state["chat"].append(("Zentra", ans))
-
-if st.session_state["chat"]:
-    with st.container():
-        for sender, msg in st.session_state["chat"]:
-            if sender == "You":
-                st.markdown(f"**🧑 You:** {msg}")
-            else:
-                st.markdown(f"**🤖 Zentra:** {msg}")
+    if st.button("📝 Generate Mock Exam"):
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "system", "content": "Create a professional mock exam with MCQs, short answers, and essay questions, with marks distribution."},
+                      {"role": "user", "content": text}]
+        )
+        st.write(response.choices[0].message.content)
