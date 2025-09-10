@@ -1,5 +1,5 @@
-streamlit
-openai
-PyPDF2
-python-docx
-fpdf
+streamlit==1.49.1
+openai==1.107.0
+pypdf==4.3.1
+python-docx==1.1.2
+fpdf==1.7.2
