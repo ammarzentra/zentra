@@ -1,11 +1,20 @@
-import streamlit as st   # ✅ must be first
-import os, io, base64, tempfile, datetime, requests
+# app.py — Zentra (PAYWALL + LEMON SQUEEZY + SUPABASE + Full App)
+# Secrets required in Streamlit:
+#   OPENAI_API_KEY
+#   SUPABASE_URL
+#   SUPABASE_ANON_KEY
+#   LEMON_CHECKOUT_URL  (e.g. https://zentraai.lemonsqueezy.com/buy/xxxxxxxx)
+#
+# DB (Supabase) table required: subscriptions
+#   columns: id (text), email (text), status (text), ends_at (timestamptz), created_at (timestamptz)
+
+import os, io, base64, tempfile, datetime
 from typing import List, Tuple
+
+import streamlit as st
 from openai import OpenAI
 
-# =========================
-# CONFIG & GLOBAL STYLES
-# =========================
+# ---------- PAGE SETUP ----------
 st.set_page_config(
     page_title="Zentra — AI Study Buddy",
     page_icon="⚡",
@@ -13,119 +22,106 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
+# ---------- GLOBAL STYLES ----------
 st.markdown("""
 <style>
+/* Hide Streamlit footer/watermark */
 a[class*="viewerBadge"], div[class*="viewerBadge"], #ViewerBadgeContainer{display:none!important;}
 footer{visibility:hidden;height:0}
+
+/* Container + hero */
 .block-container{padding-top:1rem;padding-bottom:3rem;max-width:1200px;}
 .hero{background:linear-gradient(90deg,#6a11cb 0%,#2575fc 100%);
-padding:22px;border-radius:16px;color:#fff;margin-bottom:10px;border-radius:16px;}
+padding:22px;border-radius:16px;color:#fff;margin-bottom:14px;}
 .hero h1{margin:0;font-size:34px}
 .hero p{margin:6px 0 0;opacity:.92}
-.paywall { text-align:center; padding:42px 22px; background:linear-gradient(135deg,#1e1e2f,#23243a);
-           border-radius:16px; color:#fff; box-shadow:0 4px 25px rgba(0,0,0,.35); max-width:720px; margin:40px auto;}
-.paywall h2{margin:0 0 6px 0; font-size:28px}
-.paywall p{opacity:.92}
-.pay-btn{display:inline-block; padding:14px 22px; background:#8b5cf6; border-radius:10px; color:#fff; font-weight:700; text-decoration:none;}
-.pay-btn:hover{filter:brightness(1.05)}
-.input-card{max-width:720px; margin:0 auto 16px; background:#0f1117; color:#eee; padding:14px 16px; border-radius:12px; border:1px solid #232a35;}
-.small{font-size:.9rem; opacity:.85}
+
+/* Paywall */
+.paywrap{display:flex;justify-content:center;align-items:center;}
+.paycard{
+  width:min(920px,96vw); background:#0f1221; color:#fff; border:1px solid rgba(255,255,255,.08);
+  border-radius:18px; overflow:hidden; box-shadow:0 10px 40px rgba(0,0,0,.5);
+}
+.paytop{
+  background: radial-gradient(1200px 300px at center -100px, #7c4dff 0%, transparent 70%),
+              linear-gradient(135deg,#6a11cb 0%,#2575fc 100%);
+  padding:28px 26px;
+}
+.paytop h2{margin:0;font-size:30px}
+.paygrid{display:grid;grid-template-columns: 1.2fr .8fr; gap:0; }
+.payleft{padding:22px 26px}
+.payright{padding:22px 26px; border-left:1px solid rgba(255,255,255,.06); background:#0b0e1a}
+.kicker{display:inline-block; padding:6px 10px; border-radius:999px; background:rgba(255,255,255,.12); font-size:12px; letter-spacing:.5px; margin-bottom:10px}
+.big{font-size:38px; font-weight:800; margin:.25rem 0}
+.badge{display:inline-block; font-size:12px; padding:4px 10px; border:1px solid rgba(255,255,255,.2); border-radius:999px; margin-right:6px; opacity:.9}
+.features{columns:2; column-gap:26px; margin:10px 0 4px}
+.features li{margin:6px 0}
+.small{opacity:.8; font-size:13px}
+
+/* Inputs + buttons */
+.input{width:100%; padding:12px 14px; border-radius:10px; border:1px solid #2b2e3c; background:#0b0e1a; color:#fff; outline:none}
+.input:focus{border-color:#6a9bff}
+.btn{
+  display:inline-block; width:100%; text-align:center; padding:12px 16px; border-radius:12px; border:none;
+  background:#f72585; color:#fff; font-weight:700; cursor:pointer; transition:.15s transform, .2s background;
+}
+.btn:hover{background:#d3136d; transform:translateY(-1px)}
+.btn.secondary{background:#14182a; border:1px solid #2b2e3c}
+.btn.secondary:hover{background:#1a1f35}
+.buttonrow{display:flex; gap:10px; margin-top:10px}
+
+/* Right column bullets */
+.price{font-size:28px; font-weight:800; margin:0}
+.check{display:flex; gap:8px; align-items:center; margin:6px 0; opacity:.92}
+
+/* Study tools row spacing */
+.stButton>button{border-radius:12px}
 </style>
-<script src="https://assets.lemonsqueezy.com/lemon.js" defer></script>
 """, unsafe_allow_html=True)
 
-# =========================
-# STATE
-# =========================
+# ---------- STATE ----------
+if "subscribed" not in st.session_state: st.session_state.subscribed = False
+if "user_email" not in st.session_state: st.session_state.user_email = ""
 if "chat_open" not in st.session_state: st.session_state.chat_open = False
-if "messages"  not in st.session_state: st.session_state.messages = []
+if "messages" not in st.session_state: st.session_state.messages = []
 if "history_quiz" not in st.session_state: st.session_state.history_quiz = []
 if "history_mock" not in st.session_state: st.session_state.history_mock = []
-if "notes_text"   not in st.session_state: st.session_state.notes_text = ""
-if "last_title"   not in st.session_state: st.session_state.last_title = "Untitled notes"
+if "notes_text" not in st.session_state: st.session_state.notes_text = ""
+if "last_title" not in st.session_state: st.session_state.last_title = "Untitled notes"
 if "pending_mock" not in st.session_state: st.session_state.pending_mock = False
-if "user_email"   not in st.session_state: st.session_state.user_email = ""
 
-# =========================
-# KEYS / ENDPOINTS
-# =========================
-OPENAI_KEY = st.secrets.get("OPENAI_API_KEY")
-SUPABASE_URL = st.secrets.get("SUPABASE_URL")
-SUPABASE_ANON = st.secrets.get("SUPABASE_ANON_KEY")
-LEMON_CHECKOUT_URL = st.secrets.get("LEMON_CHECKOUT_URL")  # Lemon Squeezy product URL
-
-def _client() -> OpenAI:
-    if not OPENAI_KEY:
-        st.error("Missing OPENAI_API_KEY in Streamlit Secrets."); st.stop()
-    os.environ["OPENAI_API_KEY"] = OPENAI_KEY
+# ---------- ENV / CLIENTS ----------
+def _openai() -> OpenAI:
+    key = st.secrets.get("OPENAI_API_KEY")
+    if not key:
+        st.error("Missing OPENAI_API_KEY in Secrets"); st.stop()
+    os.environ["OPENAI_API_KEY"] = key
     return OpenAI()
+
+# Supabase (read-only) for access check
+SUPABASE_URL = st.secrets.get("SUPABASE_URL", "")
+SUPABASE_ANON_KEY = st.secrets.get("SUPABASE_ANON_KEY", "")
+LEMON_CHECKOUT_URL = st.secrets.get("LEMON_CHECKOUT_URL", "")
+
+supabase = None
+if SUPABASE_URL and SUPABASE_ANON_KEY:
+    try:
+        from supabase import create_client
+        supabase = create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
+    except Exception:
+        supabase = None
 
 MODEL = "gpt-4o-mini"
 
-# =========================
-# SUBSCRIPTION CHECK (Supabase REST)
-# =========================
-def is_subscribed(email: str) -> bool:
-    """
-    True if latest row for this email has status in ('active','on_trial') and ends_at in the future.
-    Table columns expected: id, email, status, ends_at, created_at
-    """
-    if not (SUPABASE_URL and SUPABASE_ANON):
-        # if not configured, app runs unlocked (for development)
-        return True
-
-    try:
-        url = f"{SUPABASE_URL}/rest/v1/subscriptions"
-        headers = {
-            "apikey": SUPABASE_ANON,
-            "Authorization": f"Bearer {SUPABASE_ANON}",
-            "Content-Type": "application/json",
-            "Accept": "application/json",
-            "Prefer": "return=representation"
-        }
-        # select latest by created_at
-        params = {
-            "select": "*",
-            "email": f"eq.{email}",
-            "order": "created_at.desc",
-            "limit": 1
-        }
-        r = requests.get(url, headers=headers, params=params, timeout=10)
-        if r.status_code != 200:
-            return False
-        rows = r.json()
-        if not rows:
-            return False
-        row = rows[0]
-        status = (row.get("status") or "").lower()
-        ends_at = row.get("ends_at")
-        if not ends_at:
-            return False
-        # compare ends_at with now
-        now = datetime.datetime.utcnow().replace(tzinfo=datetime.timezone.utc)
-        try:
-            ends_dt = datetime.datetime.fromisoformat(ends_at.replace("Z","+00:00"))
-        except:
-            return False
-        active_like = status in ("active", "on_trial", "trialing")
-        return active_like and (ends_dt > now)
-    except Exception:
-        return False
-
-# =========================
-# OPENAI HELPERS
-# =========================
 def ask_llm(prompt: str, system="You are Zentra, a precise and supportive study buddy. Be concise and clear."):
-    r = _client().chat.completions.create(
+    r = _openai().chat.completions.create(
         model=MODEL,
         messages=[{"role":"system","content":system},{"role":"user","content":prompt}],
         temperature=0.4,
     )
     return r.choices[0].message.content.strip()
 
-# =========================
-# FILE PARSE
-# =========================
+# ---------- FILE PARSE ----------
 def read_file(uploaded) -> Tuple[str, List[Tuple[str, bytes]]]:
     if not uploaded: return "", []
     name = uploaded.name.lower(); data = uploaded.read()
@@ -170,99 +166,143 @@ def ensure_notes(pasted, uploaded):
 def adaptive_quiz_count(txt: str) -> int:
     return max(3, min(20, len(txt.split()) // 180))
 
-# =========================
-# HERO
-# =========================
+# ---------- ACCESS CHECK ----------
+def has_active_subscription(email: str) -> bool:
+    """
+    Reads Supabase 'subscriptions' for the email.
+    Active if:
+      - status in ('active','on_trial','trialing','past_due') AND
+      - ends_at is in the future (or null for evergreen)
+    """
+    if not email or not supabase:
+        return False
+    try:
+        res = supabase.table("subscriptions").select("*").eq("email", email.lower()).order("created_at", desc=True).limit(1).execute()
+        if not res.data:
+            return False
+        row = res.data[0]
+        status = (row.get("status") or "").lower()
+        ends_at = row.get("ends_at")
+        ok_status = status in ("active","on_trial","trialing","past_due")
+        if not ok_status:
+            return False
+        if ends_at:
+            try:
+                # Supabase returns ISO8601 string
+                ends = datetime.datetime.fromisoformat(ends_at.replace("Z","+00:00"))
+                return ends > datetime.datetime.now(datetime.timezone.utc)
+            except Exception:
+                return False
+        return True
+    except Exception:
+        return False
+
+# ---------- PAYWALL UI ----------
+def show_paywall():
+    st.markdown('<div class="paywrap"><div class="paycard">', unsafe_allow_html=True)
+    st.markdown('<div class="paytop"><span class="kicker">Zentra • AI Study Buddy</span><h2>Unlock smarter studying</h2></div>', unsafe_allow_html=True)
+    st.markdown('<div class="paygrid">', unsafe_allow_html=True)
+
+    # LEFT: Features + email sign-in for check
+    st.markdown('<div class="payleft">', unsafe_allow_html=True)
+    st.markdown("""
+    <div class="badge">Summaries</div>
+    <div class="badge">Flashcards</div>
+    <div class="badge">Quizzes</div>
+    <div class="badge">Mock Exams (graded)</div>
+    <div class="badge">Ask Zentra Tutor</div>
+    """, unsafe_allow_html=True)
+
+    st.markdown('<div style="height:10px"></div>', unsafe_allow_html=True)
+    st.markdown("""
+    <ul class="features">
+      <li>📄 Exam-ready summaries from your notes</li>
+      <li>🧠 Active-recall flashcards that actually cover the content</li>
+      <li>🎯 Adaptive MCQ quizzes with instant explanations</li>
+      <li>📝 Mock exams (MCQ + short + long + fill-in) with grading + feedback</li>
+      <li>💬 Ask Zentra: concepts, study plans, line-by-line help</li>
+    </ul>
+    """, unsafe_allow_html=True)
+    st.markdown('<div class="small">7-day free trial • Cancel anytime • Student-friendly pricing</div>', unsafe_allow_html=True)
+
+    with st.form("access_check", clear_on_submit=False):
+        email = st.text_input("Enter your email to check access", value=st.session_state.user_email, placeholder="you@university.edu", key="pay_email")
+        go = st.form_submit_button("Continue")
+        if go:
+            st.session_state.user_email = (email or "").strip().lower()
+            if has_active_subscription(st.session_state.user_email):
+                st.session_state.subscribed = True
+                st.success("Access granted. Enjoy Zentra!")
+                st.rerun()
+            else:
+                st.warning("No active subscription found for this email. Use Subscribe below, then click “Refresh access”.")
+    st.markdown('</div>', unsafe_allow_html=True)
+
+    # RIGHT: Price + Lemon embed
+    st.markdown('<div class="payright">', unsafe_allow_html=True)
+    st.markdown('<p class="price">$5.99<span style="font-size:14px;opacity:.75">/month</span></p>', unsafe_allow_html=True)
+    st.markdown('<div class="check">✅ 7-day free trial</div>', unsafe_allow_html=True)
+    st.markdown('<div class="check">✅ Cancel anytime</div>', unsafe_allow_html=True)
+    st.markdown('<div class="check">✅ Works for all subjects</div>', unsafe_allow_html=True)
+
+    # Lemon Squeezy embed
+    if LEMON_CHECKOUT_URL:
+        st.components.v1.html(f"""
+        <script src="https://assets.lemonsqueezy.com/lemon.js" defer></script>
+        <a href="{LEMON_CHECKOUT_URL}"
+           class="btn"
+           data-ls-embed="true"
+           style="text-decoration:none;display:block">Subscribe — Start Free Trial</a>
+        <div class="buttonrow">
+          <button class="btn secondary" onclick="window.parent.postMessage({{type:'refreshZentra'}}, '*')">Refresh access after payment</button>
+        </div>
+        """, height=120)
+    else:
+        st.info("Add LEMON_CHECKOUT_URL to Streamlit Secrets to enable in-app checkout.")
+
+    # JS bridge: let “Refresh access” cause a rerun
+    st.components.v1.html("""
+    <script>
+      window.addEventListener("message",(e)=>{
+        if(e.data && e.data.type==="refreshZentra"){
+          const btns = window.parent.document.querySelectorAll('button');
+          if(btns && btns.length){ btns[0].click(); } // nudge a rerun
+        }
+      });
+    </script>
+    """, height=0)
+
+    st.markdown('</div>', unsafe_allow_html=True)  # /payright
+    st.markdown('</div></div></div>', unsafe_allow_html=True)  # /grid + /card + /wrap
+
+# ---------- PAYWALL GATE ----------
+# If not subscribed, show paywall first.
+if not st.session_state.subscribed:
+    show_paywall()
+    st.stop()
+
+# ---------- HERO ----------
 st.markdown('<div class="hero"><h1>⚡ Zentra — AI Study Buddy</h1><p>Smarter notes → Better recall → Higher scores.</p></div>', unsafe_allow_html=True)
 
-# =========================
-# ACCESS GATE (Email + Subscription)
-# =========================
-with st.container():
-    if not st.session_state.user_email:
-        st.markdown('<div class="input-card">', unsafe_allow_html=True)
-        email = st.text_input("Enter your email to continue", placeholder="you@example.com")
-        colA, colB = st.columns([1,1])
-        with colA:
-            if st.button("Continue"):
-                if email and "@" in email:
-                    st.session_state.user_email = email.strip().lower()
-                    st.rerun()
-        with colB:
-            st.caption("Use the same email you’ll pay with, so access unlocks automatically.")
-        st.markdown('</div>', unsafe_allow_html=True)
-        st.stop()
-
-    # If we have an email, check subscription
-    email_ok = is_subscribed(st.session_state.user_email)
-
-    if not email_ok:
-        # Paywall inside app (overlay checkout). We pass email via query param so Lemon pre-fills.
-        lemon_href = LEMON_CHECKOUT_URL or ""
-        if st.session_state.user_email and "?" in lemon_href:
-            checkout_url = f"{lemon_href}&checkout[email]={st.session_state.user_email}"
-        elif st.session_state.user_email:
-            checkout_url = f"{lemon_href}?checkout[email]={st.session_state.user_email}"
-        else:
-            checkout_url = lemon_href
-
-        st.markdown(f"""
-        <div class="paywall">
-            <h2>🔒 Unlock Zentra</h2>
-            <p class="small">Your account <b>{st.session_state.user_email}</b> doesn’t have an active plan yet.</p>
-            <p>Get instant access to summaries, flashcards, quizzes, graded mocks, and Ask Zentra.</p>
-            <a class="pay-btn" href="{checkout_url}" data-ls-mode="overlay" target="_blank">Subscribe / Start Trial</a>
-            <p class="small" style="margin-top:10px;">Already paid? Click “Refresh access” below.</p>
-        </div>
-        """, unsafe_allow_html=True)
-
-        colr1, colr2 = st.columns([1,1])
-        with colr1:
-            if st.button("Refresh access"):
-                st.rerun()
-        with colr2:
-            if st.button("Change email"):
-                st.session_state.user_email = ""
-                st.rerun()
-        st.stop()
-
-# =========================
-# SIDEBAR (visible after unlock)
-# =========================
+# ---------- SIDEBAR (TOOLBOX) ----------
 with st.sidebar:
     st.markdown("## 📊 Toolbox")
-    st.write("**How Zentra Works**: Turns notes into smart tools for learning. Smarter notes → better recall → higher scores.")
-
+    st.write("**How Zentra Works**: Turns your notes into smart study tools. Consistency + feedback = progress.")
     st.markdown("### 📌 What Zentra Offers")
-    st.markdown("- **Summaries** → exam-ready bullets\n- **Flashcards** → active recall Q/A\n- **Quizzes** → MCQs + explanations (AI chooses count)\n- **Mock Exams** → graded, multi-section with evaluation\n- **Ask Zentra** → personal AI tutor")
-
+    st.markdown("- **Summaries** → exam-ready bullets\n- **Flashcards** → active recall Q/A\n- **Quizzes** → adaptive MCQs + explanations\n- **Mock Exams** → graded, multi-section with evaluation\n- **Ask Zentra** → personal AI tutor")
     st.markdown("### 🧪 Mock Evaluation")
-    st.write("Includes MCQs, short, long, and fill-in. Difficulty: *Easy / Standard / Hard*. Zentra grades responses with a marking scheme, then gives **personal feedback** on weak areas and how to improve.")
-
+    st.write("MCQ, short, long, fill-in. Difficulty: *Easy / Standard / Hard*. Zentra grades with a rubric and gives **personal feedback** on how to improve.")
     st.markdown("### 📂 History")
     st.caption("Recent Quizzes:"); st.write(st.session_state.history_quiz or "—")
     st.caption("Recent Mock Exams:"); st.write(st.session_state.history_mock or "—")
-
     st.markdown("---")
+    st.caption(f"Logged in as: {st.session_state.user_email or 'unknown'}")
     st.caption("Disclaimer: AI-generated. Always verify before exams.")
 
-st.info("Welcome to Zentra! Upload your notes and let AI transform them into study material.")
-
-# =========================
-# MAIN APP (UNLOCKED)
-# =========================
+# ---------- MAIN LAYOUT ----------
 col_main, col_chat = st.columns([3, 1.4], gap="large")
 
-# ---------- OPENAI ----------
-def _openai_text(prompt: str):
-    r = _client().chat.completions.create(
-        model=MODEL,
-        messages=[{"role":"system","content":"You are Zentra, a precise and supportive study buddy. Be concise and clear."},
-                  {"role":"user","content":prompt}],
-        temperature=0.4,
-    )
-    return r.choices[0].message.content.strip()
-
+# ---------- CORE STUDY APP ----------
 with col_main:
     # Upload
     st.markdown("### 📁 Upload your notes")
@@ -284,47 +324,61 @@ with col_main:
     go_mock    = c4.button("📝 Mock Exams")
     open_chat  = c5.button("💬 Ask Zentra")
 
-    if open_chat:
-        st.session_state.chat_open = True
+    if open_chat: st.session_state.chat_open = True
 
     out_area = st.container()
 
     # Handlers
     def do_summary(txt):
         with st.spinner("Generating summary…"):
-            prompt = f"Summarize into clear exam-ready bullet points.\n\nNotes:\n{txt}"
-            out = _openai_text(prompt)
+            prompt = f"""Summarize into sharp exam-style bullet points.
+Focus on defs, laws, steps, formulas, must-know facts. No fluff.
+
+NOTES:
+{txt}"""
+            out = ask_llm(prompt)
         out_area.subheader("✅ Summary"); out_area.markdown(out or "_(empty)_")
 
     def do_cards(txt):
         with st.spinner("Generating flashcards…"):
-            prompt = f"Make Q/A flashcards from these notes. One concept per card.\n\nNotes:\n{txt}"
-            out = _openai_text(prompt)
+            prompt = f"""Create comprehensive flashcards in the format:
+
+**Q:** ...
+**A:** ...
+
+One concept per card. Be concise and complete.
+
+NOTES:
+{txt}"""
+            out = ask_llm(prompt)
         out_area.subheader("🧠 Flashcards"); out_area.markdown(out or "_(empty)_")
 
     def do_quiz(txt):
         with st.spinner("Building quiz…"):
             n = adaptive_quiz_count(txt)
-            prompt = f"Create {n} MCQs (A–D) with answers + explanations.\n\nNotes:\n{txt}"
-            out = _openai_text(prompt)
+            prompt = f"""Create {n} MCQs (A–D) with the correct answer and a brief explanation after each.
+Vary difficulty and cover all key areas.
+
+NOTES:
+{txt}"""
+            out = ask_llm(prompt)
         st.session_state.history_quiz.append(st.session_state.last_title)
         out_area.subheader("🎯 Quiz"); out_area.markdown(out or "_(empty)_")
 
     def do_mock(txt, diff):
         with st.form("mock_form", clear_on_submit=False):
             st.write(f"### Mock Exam ({diff})")
-            st.caption("Answer the questions below, then submit for grading.")
+            st.caption("Answer below, then submit for grading.")
 
-            # Get mock from AI
-            prompt = f"""Create a **{diff}** mock exam with: 
+            # Generate the mock
+            prompt = f"""Create a **{diff}** mock exam with:
 1) 5 MCQs (A–D)
 2) 2 short-answer
 3) 1 long-answer
 4) 2 fill-in
 
-Return in structured markdown format that the student can answer after."""
-            raw = _openai_text(prompt + f"\n\nNotes:\n{txt}")
-
+Return in structured markdown (clearly numbered)."""
+            raw = ask_llm(prompt + f"\n\nNOTES:\n{txt}")
             st.markdown(raw)
 
             # Response fields
@@ -343,21 +397,21 @@ Short: {short_ans}
 Long: {long_ans}
 Fill: {fill_ans}
 
-Notes:\n{txt}
+NOTES:
+{txt}
+
 Provide:
 - Score (0–100)
 - Breakdown by section
 - Strengths
 - Weaknesses
-- Advice to improve"""
-                result = _openai_text(grading_prompt)
+- Advice to improve (actionable)"""
+                result = ask_llm(grading_prompt)
                 st.success("✅ Mock Graded")
                 st.markdown(result)
+                st.session_state.history_mock.append(f"{st.session_state.last_title} — {result.splitlines()[0]}")
 
-                st.session_state.history_mock.append(
-                    f"{st.session_state.last_title} — {result.splitlines()[0]}"
-                )
-
+    # Orchestration
     if go_summary or go_cards or go_quiz or go_mock:
         text, _ = ensure_notes(pasted, uploaded)
 
@@ -365,26 +419,34 @@ Provide:
     if go_cards:   do_cards(text)
     if go_quiz:    do_quiz(text)
     if go_mock:
-        diff = st.radio("Difficulty", ["Easy","Standard","Hard"], horizontal=True)
+        diff = st.radio("Difficulty", ["Easy","Standard","Hard"], horizontal=True, key="mkdiff")
         if st.button("Start Mock"): do_mock(text, diff)
 
-# ---------- ASK ZENTRA ----------
+# ---------- ASK ZENTRA (right column chat) ----------
 with col_chat:
     if st.session_state.chat_open:
         st.markdown("### 💬 Ask Zentra")
-        co1, co2 = st.columns(2)
-        if co1.button("Close"): st.session_state.chat_open = False; st.rerun()
-        if co2.button("Clear"): st.session_state.messages = []; st.rerun()
+        c1,c2 = st.columns(2)
+        if c1.button("Close"): st.session_state.chat_open = False; st.rerun()
+        if c2.button("Clear"): st.session_state.messages = []; st.rerun()
+
+        if not st.session_state.messages:
+            st.caption("Try: *Explain this line*, *Make a 7-day plan*, *Test me on chapter X*")
 
         for m in st.session_state.messages:
-            with st.chat_message(m["role"]): st.markdown(m["content"])
+            with st.chat_message(m["role"]):
+                st.markdown(m["content"])
 
         q = st.chat_input("Type your question…")
         if q:
             st.session_state.messages.append({"role":"user","content":q})
             with st.chat_message("user"): st.markdown(q)
             try:
-                ans = _openai_text(f"You are Zentra. Use notes if helpful.\n\nNOTES:\n{st.session_state.notes_text}\n\nUSER: {q}")
+                ans = ask_llm(
+                    f"You are Zentra. Use notes if helpful.\n\n"
+                    f"NOTES (may be empty):\n{st.session_state.notes_text}\n\n"
+                    f"USER: {q}"
+                )
             except Exception as e:
                 ans = f"Error: {e}"
             st.session_state.messages.append({"role":"assistant","content":ans})
