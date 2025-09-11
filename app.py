@@ -1,4 +1,4 @@
-# app.py — Zentra AI Study Buddy (final polished version)
+# app.py — Zentra with Paywall + Temp Dev Unlock + Fixed Chat/UI
 
 import os, io, tempfile
 from typing import List, Tuple
@@ -29,7 +29,7 @@ footer{visibility:hidden;height:0}
   padding:10px; background:#10141e; color:#e8ecf7; font-weight:700;
 }
 .tool-row .stButton>button:hover{background:#141a27; border-color:#3a4252;}
-.chat-card{background:#0e1117; border:1px solid #232b3a; border-radius:14px; padding:12px;}
+.chat-card{background:#0e1117; border:1px solid #232b3a; border-radius:14px; padding:12px; max-height:500px; overflow-y:auto;}
 .sidebar-card{background:#0f1420; border:1px solid #243047; border-radius:14px; padding:14px; margin-bottom:14px;}
 </style>
 """, unsafe_allow_html=True)
@@ -42,6 +42,43 @@ if "history_mock" not in st.session_state: st.session_state.history_mock = []
 if "notes_text" not in st.session_state: st.session_state.notes_text = ""
 if "last_title" not in st.session_state: st.session_state.last_title = "Untitled notes"
 if "pending_action" not in st.session_state: st.session_state.pending_action = None
+if "dev_unlocked" not in st.session_state: st.session_state.dev_unlocked = False
+
+# ---------- PAYWALL ----------
+if not st.session_state.dev_unlocked:
+    st.markdown(f"""
+    <div class="hero">
+      <h1>⚡ Zentra — Your Study Buddy</h1>
+      <p>Smarter notes → Better recall → Higher scores.</p>
+    </div>
+    <div class="sidebar-card" style="max-width:700px; margin:auto; text-align:center;">
+      <p><b>Unlock your AI Study Buddy for just $5.99/month</b></p>
+      <ul style="text-align:left;">
+        <li>📄 Smart Summaries — exam-ready notes</li>
+        <li>🧠 Flashcards — active recall Q/A</li>
+        <li>🎯 Quizzes — instant explanations</li>
+        <li>📝 Mock Exams — graded with feedback</li>
+        <li>💬 Ask Zentra — your AI tutor anytime</li>
+      </ul>
+      <a style="background:#f72585;color:#fff;padding:12px 26px;border-radius:10px;text-decoration:none;font-weight:700;"
+         href="https://zentraai.lemonsqueezy.com/buy/XXXXXXXX" target="_blank">
+        👉 Subscribe Now
+      </a>
+      <div class="sidebar-card" style="margin-top:18px;text-align:left;">
+        <b>How Zentra Works</b><br/>
+        - Upload your study material<br/>
+        - Zentra auto-creates summaries & flashcards<br/>
+        - Practice quizzes & mocks with feedback<br/>
+        - Chat with Zentra like a tutor<br/>
+        - Track progress & get exam-ready faster
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    if st.button("🚪 Dev Login (Temp)"):
+        st.session_state.dev_unlocked = True
+        st.rerun()
+    st.stop()
 
 # ---------- OPENAI ----------
 def _client() -> OpenAI:
