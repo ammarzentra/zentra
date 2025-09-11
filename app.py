@@ -227,4 +227,3 @@ with col_chat:
             with st.chat_message("assistant"): st.markdown(ans)
             st.rerun()
         st.markdown('</div>',unsafe_allow_html=True)
-
