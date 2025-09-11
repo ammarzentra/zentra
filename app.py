@@ -1,4 +1,4 @@
-# app.py — Zentra with Paywall + Temp Dev Unlock + Fixed Chat/UI
+# app.py — Zentra Final Polished Version (Fixed Ask Zentra Chatbox + No Empty Box)
 
 import os, io, tempfile
 from typing import List, Tuple
@@ -29,7 +29,8 @@ footer{visibility:hidden;height:0}
   padding:10px; background:#10141e; color:#e8ecf7; font-weight:700;
 }
 .tool-row .stButton>button:hover{background:#141a27; border-color:#3a4252;}
-.chat-card{background:#0e1117; border:1px solid #232b3a; border-radius:14px; padding:12px; max-height:500px; overflow-y:auto;}
+.chat-card{background:#0e1117; border:1px solid #232b3a; border-radius:14px;
+  padding:12px; max-height:420px; overflow-y:auto;}
 .sidebar-card{background:#0f1420; border:1px solid #243047; border-radius:14px; padding:14px; margin-bottom:14px;}
 </style>
 """, unsafe_allow_html=True)
@@ -173,7 +174,6 @@ with col_main:
     if open_chat: st.session_state.chat_open=True; st.rerun()
     out_area=st.container()
 
-    # ---------- PROCESSING CHOICE ----------
     if (go_summary or go_cards or go_quiz or go_mock) and uploaded:
         st.session_state.pending_action = "summary" if go_summary else "cards" if go_cards else "quiz" if go_quiz else "mock"
         choice = st.radio("Do you want to process this file as:", ["Text only","Text + images/diagrams"])
@@ -227,3 +227,4 @@ with col_chat:
             with st.chat_message("assistant"): st.markdown(ans)
             st.rerun()
         st.markdown('</div>',unsafe_allow_html=True)
+
