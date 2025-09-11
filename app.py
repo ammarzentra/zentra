@@ -1,4 +1,4 @@
-# app.py — Zentra with Paywall + Temp Dev Unlock (fixed)
+# app.py — Zentra with Paywall + Temp Dev Unlock + UI polish
 
 import os, io, tempfile
 from typing import List, Tuple
@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ---------- PAGE CONFIG ----------
 st.set_page_config(
-    page_title="Zentra — AI Study Buddy",
+    page_title="Zentra — Your AI Study Buddy",
     page_icon="⚡",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -20,14 +20,16 @@ st.markdown("""
 a[class*="viewerBadge"], div[class*="viewerBadge"], #ViewerBadgeContainer{display:none!important;}
 footer{visibility:hidden;height:0}
 .block-container{padding-top:0.75rem; padding-bottom:3rem; max-width:1200px;}
+
 /* HERO PAYWALL */
 .paywall{
   background: linear-gradient(135deg,#6a11cb 0%,#2575fc 100%);
   border-radius: 18px; padding: 50px 28px; color:#fff;
-  text-align:center; margin:40px auto; max-width:700px;
+  text-align:center; margin:40px auto; max-width:720px;
   box-shadow: 0 8px 30px rgba(0,0,0,.35);
 }
 .paywall h1{margin:0; font-size:46px; font-weight:800;}
+.paywall h2{margin:8px 0 16px; font-size:22px; font-weight:400; opacity:.9;}
 .paywall p{margin:12px 0 20px; font-size:17px; opacity:.95;}
 .features{text-align:left; margin:20px auto; display:inline-block; font-size:15px;}
 .features li{margin:8px 0;}
@@ -38,11 +40,14 @@ footer{visibility:hidden;height:0}
   display:inline-block; transition:all .25s;
 }
 .subscribe-btn:hover{background:#b5179e;}
+.bubble{background:#0f1420; border:1px solid #243047; color:#dbe2f1;
+  border-radius:16px; padding:16px; margin-top:20px; text-align:left;}
+
 /* inside app */
 .hero{background:linear-gradient(90deg,#6a11cb 0%,#2575fc 100%);
-  padding:22px; border-radius:16px; color:#fff; margin-bottom:10px; text-align:center;}
-.hero h1{margin:0;font-size:34px;font-weight:800;}
-.hero p{margin:6px 0 0;opacity:.92}
+  padding:28px; border-radius:16px; color:#fff; margin-bottom:10px; text-align:center;}
+.hero h1{margin:0;font-size:38px;font-weight:800;}
+.hero h2{margin:4px 0 0;font-size:20px;opacity:.92;font-weight:400;}
 .section-title{font-weight:800;font-size:22px;margin:10px 0 14px;}
 .tool-row .stButton>button{
   width:100%; border-radius:12px; border:1px solid #2b2f3a;
@@ -50,8 +55,6 @@ footer{visibility:hidden;height:0}
 }
 .tool-row .stButton>button:hover{background:#141a27; border-color:#3a4252;}
 .chat-card{background:#0e1117; border:1px solid #232b3a; border-radius:14px; padding:12px;}
-.bubble{background:#0f1420; border:1px solid #243047; color:#dbe2f1;
-  border-radius:16px; padding:16px; margin-top:20px; text-align:left;}
 </style>
 """, unsafe_allow_html=True)
 
@@ -68,8 +71,9 @@ if "dev_unlocked" not in st.session_state: st.session_state.dev_unlocked = False
 if not st.session_state.dev_unlocked:
     st.markdown(f"""
     <div class="paywall">
-      <h1>⚡ Zentra — AI Study Buddy</h1>
-      <p>Unlock your personal AI Study Buddy for just <b>$5.99/month</b></p>
+      <h1>⚡ Zentra</h1>
+      <h2>Your AI Study Buddy</h2>
+      <p>Unlock personalized learning tools for just <b>$5.99/month</b></p>
       <ul class="features">
         <li>📄 Smart Summaries — exam-ready notes</li>
         <li>🧠 Flashcards — active recall Q/A</li>
@@ -77,23 +81,22 @@ if not st.session_state.dev_unlocked:
         <li>📝 Mock Exams — graded with feedback</li>
         <li>💬 Ask Zentra — your AI tutor anytime</li>
       </ul>
-      <br>
       <a class="subscribe-btn" href="https://zentraai.lemonsqueezy.com/buy/XXXXXXXX" target="_blank">
         👉 Subscribe Now
       </a>
       <div class="bubble">
-        <b>How Zentra Works</b><br/>
-        - Upload your study material<br/>
-        - Zentra auto-creates summaries & flashcards<br/>
-        - Practice quizzes & mocks with feedback<br/>
-        - Chat with Zentra like a tutor<br/>
-        - Track progress & get exam-ready faster
+        <b>How Zentra Helps You</b><br/>
+        ✅ Understand faster with AI-generated notes<br/>
+        ✅ Retain better using active recall flashcards<br/>
+        ✅ Test yourself with adaptive quizzes & mocks<br/>
+        ✅ Get instant feedback on weak areas<br/>
+        ✅ Study smarter, save time, and boost your scores
       </div>
     </div>
     """, unsafe_allow_html=True)
 
-    # ✅ temp login button
-    if st.button("🚪 Dev Login (Temp)"):
+    # ✅ temp login button (for dev)
+    if st.button("🚪 Temp Dev Login"):
         st.session_state.dev_unlocked = True
         st.rerun()
 
@@ -120,20 +123,13 @@ def ask_llm(prompt: str, system="You are Zentra, a precise and supportive study 
 def read_file(uploaded) -> Tuple[str,List[Tuple[str,bytes]]]:
     if not uploaded: return "", []
     name=uploaded.name.lower(); data=uploaded.read()
-    text,images=" ",[]
+    text,images="",[]
     if name.endswith(".txt"): text=data.decode("utf-8","ignore")
     elif name.endswith(".pdf"):
         try:
             from pypdf import PdfReader
             reader=PdfReader(io.BytesIO(data))
             text="\n".join([(p.extract_text() or "") for p in reader.pages])
-        except: text=""
-    elif name.endswith(".docx"):
-        try:
-            import docx2txt
-            with tempfile.NamedTemporaryFile(delete=False,suffix=".docx") as tmp:
-                tmp.write(data); tmp.flush()
-                text=docx2txt.process(tmp.name)
         except: text=""
     elif name.endswith((".png",".jpg",".jpeg")):
         images.append((uploaded.name,data))
@@ -158,24 +154,29 @@ def adaptive_quiz_count(txt:str)->int:
 # ---------- SIDEBAR ----------
 with st.sidebar:
     st.markdown("## 📊 Toolbox")
+    st.markdown("Zentra turns your notes into a full study toolkit. Upload material, and Zentra helps you learn faster, recall more, and feel confident before exams.")
     st.markdown("### 📂 History")
     st.caption("Recent Quizzes:"); st.write(st.session_state.history_quiz or "—")
     st.caption("Recent Mock Exams:"); st.write(st.session_state.history_mock or "—")
     st.markdown("---"); st.caption("Disclaimer: AI-generated. Verify before exams.")
 
 # ---------- HERO (inside app) ----------
-st.markdown('<div class="hero"><h1>⚡ Zentra</h1><p>Welcome back! Upload your notes below.</p></div>', unsafe_allow_html=True)
+st.markdown('<div class="hero"><h1>⚡ Zentra</h1><h2>Your Study Buddy</h2></div>', unsafe_allow_html=True)
 
 # ---------- MAIN ----------
 col_main,col_chat=st.columns([3,1.4],gap="large")
 with col_main:
-    st.markdown('<div class="section-title">📁 Upload your notes</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">📁 Upload Your Notes</div>', unsafe_allow_html=True)
     cu,cm=st.columns([3,2],vertical_alignment="bottom")
     with cu:
-        uploaded=st.file_uploader("Upload",type=["pdf","docx","txt","png","jpg","jpeg"],label_visibility="collapsed")
-        pasted=st.text_area("Or paste text",height=150,label_visibility="collapsed")
-    with cm: mode=st.radio("Mode",["Text only","Include images"],horizontal=True,label_visibility="collapsed")
-    include_images=(mode=="Include images")
+        uploaded=st.file_uploader("Upload files",type=["pdf","txt","png","jpg","jpeg"],label_visibility="collapsed")
+        pasted=st.text_area("Paste your notes here…",height=160,label_visibility="visible")
+    with cm:
+        if uploaded and uploaded.name.lower().endswith(".pdf"):
+            mode=st.radio("PDF Mode",["Text only","Include images (Vision)"],horizontal=True)
+        else:
+            mode="Text only"
+    include_images=(mode=="Include images (Vision)")
 
     st.markdown('<div class="section-title">✨ Study Tools</div>', unsafe_allow_html=True)
     st.markdown('<div class="tool-row">',unsafe_allow_html=True)
@@ -234,17 +235,17 @@ with col_main:
 with col_chat:
     if st.session_state.chat_open:
         st.markdown("### 💬 Ask Zentra")
-        with st.container():
-            st.markdown('<div class="chat-card">',unsafe_allow_html=True)
-            if st.button("Clear"): st.session_state.messages=[]; st.rerun()
-            for m in st.session_state.messages:
-                with st.chat_message(m["role"]): st.markdown(m["content"])
-            q=st.chat_input("Ask Zentra…")
-            if q:
-                st.session_state.messages.append({"role":"user","content":q})
-                with st.chat_message("user"): st.markdown(q)
-                ans=ask_llm(f"You are Zentra.\nNotes:{st.session_state.notes_text}\n\nUser:{q}")
-                st.session_state.messages.append({"role":"assistant","content":ans})
-                with st.chat_message("assistant"): st.markdown(ans)
-                st.rerun()
-            st.markdown('</div>',unsafe_allow_html=True)
+        if st.button("Close"): st.session_state.chat_open=False; st.rerun()
+        if st.button("Clear"): st.session_state.messages=[]; st.rerun()
+        st.markdown('<div class="chat-card">',unsafe_allow_html=True)
+        for m in st.session_state.messages:
+            with st.chat_message(m["role"]): st.markdown(m["content"])
+        q=st.chat_input("Ask Zentra…")
+        if q:
+            st.session_state.messages.append({"role":"user","content":q})
+            with st.chat_message("user"): st.markdown(q)
+            ans=ask_llm(f"You are Zentra.\nNotes:{st.session_state.notes_text}\n\nUser:{q}")
+            st.session_state.messages.append({"role":"assistant","content":ans})
+            with st.chat_message("assistant"): st.markdown(ans)
+            st.rerun()
+        st.markdown('</div>',unsafe_allow_html=True)
