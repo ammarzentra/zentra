@@ -1,6 +1,6 @@
-# app.py — Zentra with Paywall + Temp Dev Unlock
+# app.py — Zentra with Paywall + Temp Dev Unlock (fixed)
 
-import os, io, base64, tempfile
+import os, io, tempfile
 from typing import List, Tuple
 import streamlit as st
 from openai import OpenAI
@@ -22,7 +22,6 @@ footer{visibility:hidden;height:0}
 .block-container{padding-top:0.75rem; padding-bottom:3rem; max-width:1200px;}
 /* HERO PAYWALL */
 .paywall{
-  position:relative;
   background: linear-gradient(135deg,#6a11cb 0%,#2575fc 100%);
   border-radius: 18px; padding: 50px 28px; color:#fff;
   text-align:center; margin:40px auto; max-width:700px;
@@ -39,11 +38,6 @@ footer{visibility:hidden;height:0}
   display:inline-block; transition:all .25s;
 }
 .subscribe-btn:hover{background:#b5179e;}
-/* temp trial button */
-.util-top{position:absolute; top:12px; right:12px;}
-.util-btn{background:#ffffff22; padding:6px 12px; border-radius:8px;
-  border:1px solid #ffffff55; font-size:12px; color:#fff;}
-.util-btn:hover{background:#ffffff33;}
 /* inside app */
 .hero{background:linear-gradient(90deg,#6a11cb 0%,#2575fc 100%);
   padding:22px; border-radius:16px; color:#fff; margin-bottom:10px; text-align:center;}
@@ -57,7 +51,7 @@ footer{visibility:hidden;height:0}
 .tool-row .stButton>button:hover{background:#141a27; border-color:#3a4252;}
 .chat-card{background:#0e1117; border:1px solid #232b3a; border-radius:14px; padding:12px;}
 .bubble{background:#0f1420; border:1px solid #243047; color:#dbe2f1;
-  border-radius:16px; padding:16px; margin-top:20px;}
+  border-radius:16px; padding:16px; margin-top:20px; text-align:left;}
 </style>
 """, unsafe_allow_html=True)
 
@@ -74,19 +68,14 @@ if "dev_unlocked" not in st.session_state: st.session_state.dev_unlocked = False
 if not st.session_state.dev_unlocked:
     st.markdown(f"""
     <div class="paywall">
-      <div class="util-top">
-        <button class="util-btn" onclick="window.parent.postMessage({{type:'dev_unlock'}}, '*'); return false;">
-          Temp Login
-        </button>
-      </div>
       <h1>⚡ Zentra — AI Study Buddy</h1>
       <p>Unlock your personal AI Study Buddy for just <b>$5.99/month</b></p>
       <ul class="features">
-        <li>📄 Smart Summaries → exam-ready notes</li>
-        <li>🧠 Flashcards → active recall Q/A</li>
-        <li>🎯 Quizzes → MCQs with instant explanations</li>
-        <li>📝 Mock Exams → graded with feedback</li>
-        <li>💬 Ask Zentra → your AI tutor on-demand</li>
+        <li>📄 Smart Summaries — exam-ready notes</li>
+        <li>🧠 Flashcards — active recall Q/A</li>
+        <li>🎯 Quizzes — instant explanations</li>
+        <li>📝 Mock Exams — graded with feedback</li>
+        <li>💬 Ask Zentra — your AI tutor anytime</li>
       </ul>
       <br>
       <a class="subscribe-btn" href="https://zentraai.lemonsqueezy.com/buy/XXXXXXXX" target="_blank">
@@ -94,28 +83,19 @@ if not st.session_state.dev_unlocked:
       </a>
       <div class="bubble">
         <b>How Zentra Works</b><br/>
-        1) Upload notes (PDF/DOCX/TXT)<br/>
-        2) Generate summaries, flashcards, quizzes, mocks<br/>
-        3) Ask Zentra for explanations or study plans<br/>
-        4) Track your history in the sidebar
+        - Upload your study material<br/>
+        - Zentra auto-creates summaries & flashcards<br/>
+        - Practice quizzes & mocks with feedback<br/>
+        - Chat with Zentra like a tutor<br/>
+        - Track progress & get exam-ready faster
       </div>
     </div>
     """, unsafe_allow_html=True)
 
-    st.components.v1.html("""
-    <script>
-    window.addEventListener("message",(e)=>{
-      if(e.data && e.data.type==="dev_unlock"){
-        const url=new URL(window.location.href);
-        url.searchParams.set("dev","1");
-        window.location.href=url.toString();
-      }
-    });
-    </script>
-    """, height=0)
-
-    if st.query_params.get("dev")=="1":
-        st.session_state.dev_unlocked=True
+    # ✅ temp login button
+    if st.button("🚪 Dev Login (Temp)"):
+        st.session_state.dev_unlocked = True
+        st.rerun()
 
     st.stop()
 
