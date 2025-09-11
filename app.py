@@ -46,6 +46,7 @@ if "subscribed" not in st.session_state:
             font-size: 1.2rem;
             font-weight: bold;
             transition: background 0.3s ease;
+            display: inline-block;
         }
         .subscribe-btn:hover {
             background: #b5179e;
@@ -68,11 +69,13 @@ if "subscribed" not in st.session_state:
             <a class="subscribe-btn" href="https://zentraa07.gumroad.com/l/moirk" target="_blank">
                 👉 Subscribe on Gumroad ($5.99/mo)
             </a>
+            <p style="margin-top:15px; font-size:0.9rem; color:#bbb;">
+                7-day free trial available • Cancel anytime
+            </p>
         </div>
     """, unsafe_allow_html=True)
 
     st.stop()
-
 
 # ---------- PAGE CONFIG ----------
 st.set_page_config(
@@ -242,13 +245,7 @@ with col_main:
             st.caption("Answer the questions below, then submit for grading.")
 
             # Get mock from AI
-            prompt = f"""Create a **{diff}** mock exam with:
-1) 5 MCQs (A–D)
-2) 2 short-answer
-3) 1 long-answer
-4) 2 fill-in
-
-Return in structured markdown format."""
+            prompt = f"""Create a **{diff}** mock exam with: 1) 5 MCQs (A–D) 2) 2 short-answer 3) 1 long-answer 4) 2 fill-in  Return in structured markdown format."""
             raw = ask_llm(prompt + f"\n\nNotes:\n{txt}")
 
             st.markdown(raw)
