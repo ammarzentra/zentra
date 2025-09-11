@@ -5,11 +5,20 @@ from openai import OpenAI
 
 # ---------- PAYWALL ----------
 if "subscribed" not in st.session_state:
-    st.title("🔒 Access Zentra")
-    st.write("Please subscribe to access Zentra. Click below to proceed to checkout:")
-    st.link_button("👉 Subscribe on Gumroad ($5.99/mo)", 
-                   "https://zentraa07.gumroad.com/l/moirk")
+    st.markdown("""
+        <style>
+        ... (the CSS + HTML I gave you) ...
+        </style>
+    """, unsafe_allow_html=True)
+
+    st.markdown("""
+        <div class="paywall">
+            ... (the features + subscribe button) ...
+        </div>
+    """, unsafe_allow_html=True)
+
     st.stop()
+
 
 # ---------- PAGE CONFIG ----------
 st.set_page_config(
