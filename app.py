@@ -1,3 +1,15 @@
+# ---------- PAYWALL ----------
+if "subscribed" not in st.session_state:
+    st.session_state.subscribed = False
+
+if not st.session_state.subscribed:
+    st.markdown("## 🔒 Access Zentra")
+    st.write("To use Zentra’s study tools, please subscribe below 👇")
+    st.link_button("👉 Subscribe on Gumroad ($5.99/month)", "https://zentraa07.gumroad.com/l/moirk")
+    st.stop()  # stop rendering until subscribed
+
+
+
 # app.py — Zentra (final stable release)
 
 import os, io, base64, tempfile
