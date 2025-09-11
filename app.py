@@ -1,4 +1,4 @@
-# app.py — Zentra Final Pro UI (DAN mode 🔥)
+# app.py — Zentra Final Build
 
 import os, io, tempfile
 from typing import List, Tuple
@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ---------- PAGE CONFIG ----------
 st.set_page_config(
-    page_title="Zentra — AI Study Buddy",
+    page_title="Zentra — Your Study Buddy",
     page_icon="⚡",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -16,59 +16,40 @@ st.set_page_config(
 # ---------- GLOBAL STYLES ----------
 st.markdown("""
 <style>
-/* Hide Streamlit cruft */
 a[class*="viewerBadge"], div[class*="viewerBadge"], #ViewerBadgeContainer{display:none!important;}
 footer{visibility:hidden;height:0}
-.block-container{padding-top:0.5rem; padding-bottom:2.5rem; max-width:1200px;}
-
-/* Paywall Hero */
+.block-container{padding-top:0.75rem; padding-bottom:3rem; max-width:1200px;}
+/* HERO PAYWALL */
 .paywall{
   background: linear-gradient(135deg,#6a11cb 0%,#2575fc 100%);
-  border-radius: 20px; padding: 60px 32px; color:#fff;
-  text-align:center; margin:50px auto; max-width:750px;
-  box-shadow: 0 10px 35px rgba(0,0,0,.4);
+  border-radius: 18px; padding: 50px 28px; color:#fff;
+  text-align:center; margin:40px auto; max-width:700px;
+  box-shadow: 0 8px 30px rgba(0,0,0,.35);
 }
-.paywall h1{margin:0; font-size:50px; font-weight:800;}
-.paywall p{margin:14px 0 24px; font-size:18px; opacity:.95;}
-.features{text-align:left; margin:24px auto; display:inline-block; font-size:16px;}
-.features li{margin:10px 0;}
+.paywall h1{margin:0; font-size:46px; font-weight:800;}
+.paywall p{margin:12px 0 20px; font-size:17px; opacity:.95;}
+.features{text-align:left; margin:20px auto; display:inline-block; font-size:15px;}
+.features li{margin:8px 0;}
 .subscribe-btn{
-  background: linear-gradient(90deg,#ff6a00,#ee0979);
-  color:#fff; padding:15px 36px;
-  border-radius:14px; text-decoration:none;
-  font-size:19px; font-weight:700;
-  display:inline-block; transition:all .25s; box-shadow:0 4px 12px rgba(0,0,0,.3);
+  background:#f72585; color:#fff; padding:14px 28px;
+  border-radius:12px; text-decoration:none;
+  font-size:18px; font-weight:700;
+  display:inline-block; transition:all .25s;
 }
-.subscribe-btn:hover{background:linear-gradient(90deg,#ee0979,#ff6a00); transform:translateY(-2px);}
-
-/* Inside App Hero */
+.subscribe-btn:hover{background:#b5179e;}
+/* inside app */
 .hero{background:linear-gradient(90deg,#6a11cb 0%,#2575fc 100%);
-  padding:28px; border-radius:18px; color:#fff; margin-bottom:18px; text-align:center;}
-.hero h1{margin:0;font-size:38px;font-weight:800;}
-.hero p{margin:6px 0 0;opacity:.92;font-size:17px}
-
-/* Section Titles */
-.section-title{font-weight:800;font-size:22px;margin:12px 0 16px;}
-
-/* Tool buttons */
+  padding:22px; border-radius:16px; color:#fff; margin-bottom:10px; text-align:center;}
+.hero h1{margin:0;font-size:34px;font-weight:800;}
+.hero p{margin:6px 0 0;opacity:.92}
+.section-title{font-weight:800;font-size:22px;margin:10px 0 14px;}
 .tool-row .stButton>button{
   width:100%; border-radius:12px; border:1px solid #2b2f3a;
-  padding:12px; background:#10141e; color:#e8ecf7; font-weight:700;
+  padding:10px; background:#10141e; color:#e8ecf7; font-weight:700;
 }
 .tool-row .stButton>button:hover{background:#141a27; border-color:#3a4252;}
-
-/* Chat card */
-.chat-card{background:#0e1117; border:1px solid #232b3a; border-radius:14px; padding:12px; max-height:550px; overflow-y:auto;}
-.chat-card::-webkit-scrollbar{width:8px;} 
-.chat-card::-webkit-scrollbar-thumb{background:#333;border-radius:4px;}
-
-/* Sidebar */
-[data-testid="stSidebar"]{
-  background:linear-gradient(180deg,#1a1c24,#0e1117);
-  color:#e2e6f0; padding:20px 14px;
-}
-[data-testid="stSidebar"] h2{font-size:20px;font-weight:800;margin-bottom:10px;}
-[data-testid="stSidebar"] p, [data-testid="stSidebar"] li{font-size:14px;line-height:1.5;}
+.chat-box{max-height:420px; overflow-y:auto; padding:10px;
+  border:1px solid #232b3a; border-radius:14px; background:#0e1117;}
 </style>
 """, unsafe_allow_html=True)
 
@@ -98,13 +79,13 @@ if not st.session_state.dev_unlocked:
       <a class="subscribe-btn" href="https://zentraai.lemonsqueezy.com/buy/XXXXXXXX" target="_blank">
         👉 Subscribe Now
       </a>
-      <div class="bubble" style="margin-top:28px; text-align:left; font-size:15px; line-height:1.6;">
-        <b>How Zentra Helps You</b><br/><br/>
-        • Personalized AI tutor available 24/7<br/>
-        • Converts notes into powerful learning tools<br/>
-        • Tracks your weak areas & gives focused advice<br/>
-        • Helps you prep smarter, not harder<br/>
-        • Gets you exam-ready faster 🚀
+      <div class="bubble">
+        <b>How Zentra Works</b><br/>
+        - Upload study material<br/>
+        - Zentra creates summaries & flashcards<br/>
+        - Practice quizzes & mocks with feedback<br/>
+        - Chat with Zentra like a tutor<br/>
+        - Track progress & get exam-ready faster
       </div>
     </div>
     """, unsafe_allow_html=True)
@@ -112,7 +93,6 @@ if not st.session_state.dev_unlocked:
     if st.button("🚪 Dev Login (Temp)"):
         st.session_state.dev_unlocked = True
         st.rerun()
-
     st.stop()
 
 # ---------- OPENAI ----------
@@ -173,28 +153,25 @@ def adaptive_quiz_count(txt:str)->int:
 
 # ---------- SIDEBAR ----------
 with st.sidebar:
-    st.header("📊 Your Study Hub")
-    st.markdown("Zentra turns your notes into smart learning tools. Summaries, flashcards, quizzes, mocks — all powered by AI.")
-    st.markdown("---")
-    st.subheader("📂 History")
+    st.markdown("## 🌟 Your Study Toolkit")
+    st.write("Zentra turns notes into a full toolkit: summaries, flashcards, quizzes, mocks, and a tutor — all in one place.")
+    st.markdown("### 📂 History")
     st.caption("Recent Quizzes:"); st.write(st.session_state.history_quiz or "—")
     st.caption("Recent Mock Exams:"); st.write(st.session_state.history_mock or "—")
-    st.markdown("---")
-    st.caption("⚠️ AI-generated. Always double-check before exams.")
+    st.markdown("---"); st.caption("Disclaimer: AI-generated. Verify before exams.")
 
 # ---------- HERO ----------
-st.markdown('<div class="hero"><h1>⚡ Zentra — AI Study Buddy</h1><p>Welcome back! Upload your notes below.</p></div>', unsafe_allow_html=True)
+st.markdown('<div class="hero"><h1>⚡ Zentra — Your Study Buddy</h1><p>Smarter notes → Better recall → Higher scores.</p></div>', unsafe_allow_html=True)
 
 # ---------- MAIN ----------
 col_main,col_chat=st.columns([3,1.4],gap="large")
 with col_main:
-    st.markdown('<div class="section-title">📁 Upload your notes</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">📁 Upload Your Notes</div>', unsafe_allow_html=True)
     cu,cm=st.columns([3,2],vertical_alignment="bottom")
     with cu:
-        uploaded=st.file_uploader("Upload",type=["pdf","docx","txt","png","jpg","jpeg"],label_visibility="collapsed")
-        pasted=st.text_area("Paste your notes here…",height=160,label_visibility="collapsed")
-    with cm: mode=st.radio("Mode",["Text only","Include images"],horizontal=True,label_visibility="collapsed")
-    include_images=(mode=="Include images")
+        uploaded=st.file_uploader("Upload file",type=["pdf","docx","txt","png","jpg","jpeg"],label_visibility="collapsed")
+        pasted=st.text_area("Paste your notes here…",height=150,label_visibility="collapsed")
+    include_images=False
 
     st.markdown('<div class="section-title">✨ Study Tools</div>', unsafe_allow_html=True)
     st.markdown('<div class="tool-row">',unsafe_allow_html=True)
@@ -222,7 +199,7 @@ with col_main:
     def do_quiz(txt):
         with st.spinner("Building quiz…"):
             n=adaptive_quiz_count(txt)
-            out=ask_llm(f"Create {n} MCQs (A–D) with answer+explanation.\n\nNotes:\n{txt}")
+            out=ask_llm(f"Create {n} MCQs (A–D) with answers + explanations.\n\nNotes:\n{txt}")
         st.session_state.history_quiz.append(st.session_state.last_title)
         out_area.subheader("🎯 Quiz"); out_area.markdown(out or "_(empty)_")
 
@@ -253,18 +230,19 @@ with col_main:
 with col_chat:
     if st.session_state.chat_open:
         st.markdown("### 💬 Ask Zentra")
-        with st.container():
-            st.markdown('<div class="chat-card">',unsafe_allow_html=True)
-            if st.button("Close Chat"): st.session_state.chat_open=False; st.rerun()
-            if st.button("Clear"): st.session_state.messages=[]; st.rerun()
-            for m in st.session_state.messages:
-                with st.chat_message(m["role"]): st.markdown(m["content"])
-            q=st.chat_input("Ask Zentra…")
-            if q:
-                st.session_state.messages.append({"role":"user","content":q})
-                with st.chat_message("user"): st.markdown(q)
-                ans=ask_llm(f"You are Zentra.\nNotes:{st.session_state.notes_text}\n\nUser:{q}")
-                st.session_state.messages.append({"role":"assistant","content":ans})
-                with st.chat_message("assistant"): st.markdown(ans)
-                st.rerun()
-            st.markdown('</div>',unsafe_allow_html=True)
+        if st.button("Close"): st.session_state.chat_open=False; st.rerun()
+        if st.button("Clear"): st.session_state.messages=[]; st.rerun()
+
+        chat_html = "<div class='chat-box' id='chat-box'>"
+        for m in st.session_state.messages:
+            role = "🧑‍🎓 You" if m["role"]=="user" else "🤖 Zentra"
+            chat_html += f"<p><b>{role}:</b> {m['content']}</p>"
+        chat_html += "</div><script>var box=document.getElementById('chat-box');box.scrollTop=box.scrollHeight;</script>"
+        st.markdown(chat_html, unsafe_allow_html=True)
+
+        q=st.chat_input("Ask Zentra…")
+        if q:
+            st.session_state.messages.append({"role":"user","content":q})
+            ans=ask_llm(f"You are Zentra.\nNotes:{st.session_state.notes_text}\n\nUser:{q}")
+            st.session_state.messages.append({"role":"assistant","content":ans})
+            st.rerun()
