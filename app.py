@@ -3,80 +3,6 @@ import os, io, base64, tempfile
 from typing import List, Tuple
 from openai import OpenAI
 
-# ---------- PAYWALL ----------
-if "subscribed" not in st.session_state:
-    st.markdown("""
-        <style>
-        .paywall {
-            text-align: center;
-            padding: 60px 20px;
-            background: linear-gradient(135deg, #1e1e2f, #23243a);
-            border-radius: 16px;
-            color: #fff;
-            box-shadow: 0px 4px 25px rgba(0,0,0,0.4);
-            max-width: 650px;
-            margin: 80px auto;
-            font-family: 'Segoe UI', sans-serif;
-        }
-        .paywall h1 {
-            font-size: 2.4rem;
-            margin-bottom: 10px;
-            color: #f5f5f5;
-        }
-        .paywall p {
-            font-size: 1.1rem;
-            margin-bottom: 25px;
-            color: #d1d1d1;
-        }
-        .features {
-            text-align: left;
-            margin: 20px auto;
-            display: inline-block;
-            font-size: 1rem;
-        }
-        .features li {
-            margin: 10px 0;
-        }
-        .subscribe-btn {
-            background: #f72585;
-            color: white;
-            padding: 14px 28px;
-            border-radius: 10px;
-            text-decoration: none;
-            font-size: 1.2rem;
-            font-weight: bold;
-            transition: background 0.3s ease;
-            display: inline-block;
-        }
-        .subscribe-btn:hover {
-            background: #b5179e;
-        }
-        </style>
-    """, unsafe_allow_html=True)
-
-    st.markdown(f"""
-        <div class="paywall">
-            <h1>🔒 Access Zentra</h1>
-            <p>Unlock your personal AI Study Buddy for just <b>$5.99/month</b></p>
-            <ul class="features">
-                <li>📄 Smart Summaries → exam-ready notes</li>
-                <li>🧠 Flashcards → active recall Q/A</li>
-                <li>🎯 Quizzes → MCQs with instant explanations</li>
-                <li>📝 Mock Exams → graded with feedback</li>
-                <li>💬 Ask Zentra → your AI tutor on-demand</li>
-            </ul>
-            <br>
-            <a class="subscribe-btn" href="https://zentraa07.gumroad.com/l/moirk" target="_blank">
-                👉 Subscribe on Gumroad ($5.99/mo)
-            </a>
-            <p style="margin-top:15px; font-size:0.9rem; color:#bbb;">
-                7-day free trial available • Cancel anytime
-            </p>
-        </div>
-    """, unsafe_allow_html=True)
-
-    st.stop()
-
 # ---------- PAGE CONFIG ----------
 st.set_page_config(
     page_title="Zentra — AI Study Buddy",
@@ -245,7 +171,12 @@ with col_main:
             st.caption("Answer the questions below, then submit for grading.")
 
             # Get mock from AI
-            prompt = f"""Create a **{diff}** mock exam with: 1) 5 MCQs (A–D) 2) 2 short-answer 3) 1 long-answer 4) 2 fill-in  Return in structured markdown format."""
+            prompt = f"""Create a **{diff}** mock exam with: 
+1) 5 MCQs (A–D) 
+2) 2 short-answer 
+3) 1 long-answer 
+4) 2 fill-in 
+Return in structured markdown format."""
             raw = ask_llm(prompt + f"\n\nNotes:\n{txt}")
 
             st.markdown(raw)
