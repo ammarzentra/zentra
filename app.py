@@ -1,22 +1,19 @@
-# app.py — Zentra (final DAN build)
-# - Clean paywall (3-day trial), Dev Login (temp)
-# - Fancy collapsible sidebar
-# - Big centered upload + paste area
-# - Tooltips on buttons
-# - “Process as: Text only vs Text + Images/Diagrams” flow BEFORE running any tool
-# - Summaries / Flashcards / Quizzes / Mock Exams:
-#     * Quizzes render MCQs with inputs + scoring & explanations
-#     * Mock asks difficulty, renders full exam with inputs, grades 0–100 + feedback
-# - Ask Zentra chat: fixed-height scroll, no layout drift
+# app.py — Zentra (final, polished, all-in-one)
+# - Paywall with clean background + pro subscribe button + dev login
+# - Fancy collapsible sidebar + history with delete
+# - Upload area centered; no extra boxes/tips
+# - Text vs Text+Images choice wired to backend (PDF diagrams considered)
+# - Summaries / Flashcards / Quizzes / Mock Exams: interactive + graded
+# - Ask Zentra: proper chatbox, independent of notes (toggle available)
 
-import os, io, json, base64, tempfile
-from typing import List, Tuple, Optional
+import os, io, base64, tempfile, math
+from typing import List, Tuple, Dict, Any
+from dataclasses import dataclass
+from PIL import Image
 import streamlit as st
 from openai import OpenAI
 
-# =========================
-# PAGE CONFIG & GLOBAL CSS
-# =========================
+# --------------------------- PAGE CONFIG ---------------------------
 st.set_page_config(
     page_title="Zentra — Your Study Buddy",
     page_icon="⚡",
@@ -24,146 +21,189 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
+# --------------------------- GLOBAL STYLE --------------------------
 st.markdown("""
 <style>
-/* --- Reset cruft --- */
+/* reset cruft */
 a[class*="viewerBadge"], div[class*="viewerBadge"], #ViewerBadgeContainer{display:none!important;}
 footer{visibility:hidden;height:0}
-.block-container{padding-top:.8rem; padding-bottom:3rem; max-width:1200px;}
+.block-container{padding-top:0.5rem; padding-bottom:3rem; max-width:1200px;}
 
-/* --- Paywall --- */
-.paywrap{display:flex; justify-content:center; margin-top:32px;}
-.paywall{
-  width: 880px; max-width: 95%;
-  background: radial-gradient(1200px 500px at 50% -200px,#7c4dff 0%, #1b2a4a 40%, #0e1421 100%);
-  border: 1px solid rgba(255,255,255,.08);
-  border-radius: 18px; padding: 44px 36px; color:#eaf0ff;
-  box-shadow: 0 12px 36px rgba(0,0,0,.40);
+/* gradient app bg (also for paywall empty space) */
+html, body, [data-testid="stAppViewContainer"]{
+  background:
+    radial-gradient(1200px 600px at -10% -10%, rgba(45,74,255,.12), transparent 60%),
+    radial-gradient(1000px 500px at 110% -10%, rgba(105,0,255,.12), transparent 60%),
+    linear-gradient(180deg, #0a0e16, #0a0e16);
 }
-.paywall h1{margin:0 0 8px 0; font-size:44px; font-weight:900; letter-spacing:.2px;}
-.paywall p.sub{margin:0 0 22px; font-size:16px; opacity:.9}
-.paygrid{display:grid; grid-template-columns: 1fr 380px; gap:24px; align-items:start;}
-.paycard{
-  background: rgba(255,255,255,.03);
-  border: 1px solid rgba(255,255,255,.06);
-  border-radius:14px; padding:18px 18px;
-}
-.paycard ul{padding-left:20px; margin:10px 0;}
-.paycard li{margin:8px 0;}
-.btnrow{display:flex; gap:12px; align-items:center; margin-top:8px;}
-.btn-sub{
-  background: linear-gradient(180deg,#ffd257 0%,#ffb700 100%);
-  color:#1c1c1c; padding:12px 22px; font-weight:800; border-radius:12px;
-  text-decoration:none; display:inline-block; border:0; box-shadow: 0 4px 0 #c69200;
-}
-.btn-sub:hover{transform:translateY(-1px)}
-.badge{font-size:12px; padding:5px 10px; border-radius:999px; border:1px solid rgba(255,255,255,.18);}
 
-/* --- In-app HERO --- */
+/* HERO */
 .hero{
-  background: linear-gradient(90deg,#6a11cb 0%,#2575fc 100%);
-  border-radius:16px; color:#fff; text-align:center;
-  padding:24px; margin: 8px 0 16px;
-  box-shadow: inset 0 -2px 0 rgba(255,255,255,.15);
+  background: linear-gradient(90deg,#6f31ff 0%,#2a7dff 100%);
+  border-radius: 18px; color:#fff; padding:26px 28px; margin:18px 0 10px;
+  box-shadow: 0 8px 30px rgba(0,0,0,.35);
 }
-.hero h1{margin:0; font-size:32px; font-weight:900;}
+.hero h1{margin:0; font-size:34px; font-weight:800;}
 .hero p{margin:6px 0 0; opacity:.95}
 
-/* --- Upload area --- */
-.card{
-  background:#101623; border:1px solid #223146;
-  border-radius:14px; padding:16px;
+/* PAYWALL CARD */
+.paywrap{display:flex; align-items:center; justify-content:center; padding:32px 10px;}
+.paycard{
+  width: min(860px, 92vw);
+  background: linear-gradient(170deg, rgba(40,70,190,.35), rgba(30,40,70,.15));
+  border: 1px solid rgba(255,255,255,.08);
+  border-radius: 22px; padding: 34px 30px; color:#e9eefc;
+  box-shadow: 0 16px 60px rgba(0,0,0,.45);
 }
-.label{font-weight:800; font-size:20px; margin:8px 0 12px;}
-textarea, .stTextArea textarea{min-height:190px!important}
+.paytitle{font-size:42px; font-weight:900; letter-spacing:.3px; margin:0 0 8px;}
+.paystrap{display:flex; gap:12px; flex-wrap:wrap; align-items:center; opacity:.95; margin-bottom:18px;}
+.badge{border:1px solid rgba(255,255,255,.18); padding:6px 10px; border-radius:999px; font-size:13px; background:rgba(255,255,255,.06);}
+.list{background: rgba(5,10,20,.45); border:1px solid rgba(255,255,255,.08); border-radius:18px; padding:18px 18px; margin:16px 0 22px;}
+.list li{margin:8px 0;}
 
-/* --- Tool buttons --- */
+/* Subscribe button — strong, dark, credible */
+.primary-btn{
+  background: linear-gradient(180deg,#2d7cff,#1b54f2);
+  border: 1px solid #0e38b8;
+  color:#fff; font-weight:800; letter-spacing:.2px;
+  padding:14px 22px; border-radius:12px; text-decoration:none; display:inline-block;
+  box-shadow: 0 8px 26px rgba(29,88,255,.28);
+  transition: transform .04s ease-in-out, box-shadow .2s;
+}
+.primary-btn:hover{ transform: translateY(-1px); box-shadow: 0 10px 30px rgba(29,88,255,.38); }
+
+/* secondary button */
+.secondary-btn{
+  background: transparent; border:1px solid rgba(255,255,255,.25); color:#e9eefc;
+  padding:12px 18px; border-radius:12px; text-decoration:none; display:inline-block;
+}
+
+/* Upload block */
+.upload-card{
+  background:#0e1117; border:1px solid #263147; border-radius:16px; padding:12px 14px;
+}
+
+/* tool buttons */
 .tool-row .stButton>button{
-  width:100%; border-radius:12px; border:1px solid #2b2f3a;
-  padding:10px 12px; background:#0e1421; color:#e8ecf7; font-weight:800;
+  width:100%; border-radius:12px; padding:12px 16px; font-weight:800;
+  color:#e7ecfb; background:#101726; border:1px solid #2b3a54;
 }
-.tool-row .stButton>button:hover{background:#121a2b; border-color:#3a4252;}
+.tool-row .stButton>button:hover{background:#152037; border-color:#3b4f77}
 
-/* --- Choice bar (process text vs images) --- */
-.choice{
-  background:#0f1420; border:1px solid #243047; color:#dbe2f1;
-  border-radius:14px; padding:14px 16px; margin-top:12px;
+/* Output area fixed so layout doesn't jump */
+.output{
+  background:#0e1117; border:1px solid #23314c; border-radius:16px; padding:16px; min-height:160px;
 }
 
-/* --- Chat --- */
-.chat-wrap{border:1px solid #223146; border-radius:14px; background:#0f1420; padding:10px;}
-.chat-box{max-height:420px; overflow-y:auto; padding:2px 6px;}
-.chat-msg{margin:6px 0;}
-.chat-role{opacity:.8; font-weight:700; margin-right:6px}
+/* Chat */
+.chatbox{max-height:420px; overflow-y:auto; padding:14px; background:#0e1117;
+  border:1px solid #23314c; border-radius:16px;}
+.msg{margin:.3rem 0;}
+.msg .from{opacity:.7; margin-right:.35rem}
 
-/* --- Sidebar polish --- */
-.sidebar-card{
-  background:#0f1420; border:1px solid #243047; color:#dbe2f1;
-  border-radius:14px; padding:14px; margin-bottom:10px;
+/* Sidebar fancy card */
+.sb-card{
+  background:#0f1422; border:1px solid #26324b; border-radius:14px; padding:14px; margin-bottom:10px;
 }
-.sidebar-title{font-weight:900; font-size:18px; display:flex; gap:6px; align-items:center;}
-.sidebar-small{opacity:.85; font-size:13px;}
+.sb-title{font-weight:900; font-size:18px; display:flex; gap:.5rem; align-items:center;}
+.sb-chip{font-size:12px; padding:2px 8px; border-radius:999px; background:#131b2d; border:1px solid #2b3a54;}
 
-/* --- Fix chat input phantom spacing --- */
-.block-container div[data-testid="stChatInput"]{margin-top:6px;}
+/* radio line under process bar */
+.process-bar{border:1px solid #2b3a54; border-radius:12px; padding:8px 10px; margin:10px 0 6px; background:#0e1117;}
 </style>
 """, unsafe_allow_html=True)
 
-# =================
-# SESSION DEFAULTS
-# =================
+# --------------------------- STATE ---------------------------
 ss = st.session_state
 ss.setdefault("dev_unlocked", False)
-ss.setdefault("chat_open", True)
+ss.setdefault("chat_open", False)
 ss.setdefault("messages", [])
 ss.setdefault("history_quiz", [])
 ss.setdefault("history_mock", [])
 ss.setdefault("notes_text", "")
-ss.setdefault("last_title", "Untitled notes")
-# flow for pre-tool choice
-ss.setdefault("pending_tool", None)           # "summary" | "cards" | "quiz" | "mock"
-ss.setdefault("process_choice", None)         # "text" | "vision"
-ss.setdefault("temp_text", "")
-ss.setdefault("temp_images", [])
+ss.setdefault("last_title", "Untitled")
+ss.setdefault("pending_tool", None)          # "summary","cards","quiz","mock"
+ss.setdefault("process_choice", None)        # "text" or "vision"
+ss.setdefault("uploaded_blob", None)         # raw bytes of last upload
+ss.setdefault("uploaded_name", None)
+ss.setdefault("extracted_images", [])        # cached images from last upload (PIL)
+ss.setdefault("use_notes_in_chat", False)
 
-# ============
-# OPENAI HELPER
-# ============
+# --------------------------- OPENAI ---------------------------
 def _client() -> OpenAI:
     key = st.secrets.get("OPENAI_API_KEY")
     if not key:
-        st.error("Missing OPENAI_API_KEY in Streamlit Secrets.")
+        st.error("Missing OPENAI_API_KEY in Streamlit secrets.")
         st.stop()
     os.environ["OPENAI_API_KEY"] = key
     return OpenAI()
 
-MODEL = "gpt-4o-mini"
+MODEL_TEXT = "gpt-4o-mini"
+MODEL_VISION = "gpt-4o-mini"
 
-def ask_llm_text(prompt: str, system="You are Zentra, a precise and supportive study buddy. Be concise, exam-focused, and clear.") -> str:
+def llm_text(prompt: str, system: str = "You are Zentra, a precise and supportive study buddy. Be concise and clear.") -> str:
     r = _client().chat.completions.create(
-        model=MODEL,
+        model=MODEL_TEXT,
         messages=[{"role":"system","content":system},{"role":"user","content":prompt}],
-        temperature=0.4,
+        temperature=0.35
     )
     return (r.choices[0].message.content or "").strip()
 
-# ====================
-# FILE PARSE & HELPERS
-# ====================
-def read_file(uploaded) -> Tuple[str, List[Tuple[str, bytes]]]:
+def llm_vision(prompt: str, images_b64: List[str]) -> str:
+    content: List[Dict[str,Any]] = [{"type":"text","text":prompt}]
+    for b64 in images_b64[:8]:  # cap to avoid huge requests
+        content.append({"type":"image_url","image_url":{"url":f"data:image/png;base64,{b64}"}})
+    r = _client().chat.completions.create(
+        model=MODEL_VISION,
+        messages=[{"role":"user","content":content}],
+        temperature=0.35
+    )
+    return (r.choices[0].message.content or "").strip()
+
+# --------------------------- FILE PARSE ---------------------------
+def read_file(uploaded) -> Tuple[str, List[Image.Image]]:
+    """Return text and extracted images (PIL)."""
     if not uploaded: return "", []
     name = uploaded.name.lower()
     data = uploaded.read()
-    text, images = "", []
+    ss.uploaded_blob = data
+    ss.uploaded_name = uploaded.name
+    text = ""
+    imgs: List[Image.Image] = []
+
     if name.endswith(".txt"):
         text = data.decode("utf-8","ignore")
+
     elif name.endswith(".pdf"):
+        # Text via pypdf
         try:
             from pypdf import PdfReader
-            reader = PdfReader(io.BytesIO(data))
-            text = "\n".join([(p.extract_text() or "") for p in reader.pages])
+            pdf = PdfReader(io.BytesIO(data))
+            text = "\n".join([(p.extract_text() or "") for p in pdf.pages])
+            # Try to extract images from XObjects (no poppler needed)
+            for page in pdf.pages:
+                try:
+                    res = page["/Resources"]
+                    if "/XObject" in res:
+                        xobjs = res["/XObject"].get_object()
+                        for obj in xobjs:
+                            xobj = xobjs[obj]
+                            if xobj.get("/Subtype") == "/Image":
+                                size = (xobj.get("/Width"), xobj.get("/Height"))
+                                data_img = xobj.get_data()
+                                color_space = xobj.get("/ColorSpace")
+                                mode = "RGB" if color_space in ["/DeviceRGB", "/ICCBased"] else "P"
+                                try:
+                                    img = Image.frombytes(mode, size, data_img)
+                                except Exception:
+                                    # fallback via PIL open
+                                    img = Image.open(io.BytesIO(data_img))
+                                imgs.append(img.convert("RGB"))
+                except Exception:
+                    pass
         except Exception:
             text = ""
+
     elif name.endswith(".docx"):
         try:
             import docx2txt
@@ -172,384 +212,378 @@ def read_file(uploaded) -> Tuple[str, List[Tuple[str, bytes]]]:
                 text = docx2txt.process(tmp.name)
         except Exception:
             text = ""
+
     elif name.endswith((".png",".jpg",".jpeg")):
-        images.append((uploaded.name, data))
-    else:
         try:
-            text = data.decode("utf-8","ignore")
+            img = Image.open(io.BytesIO(data)).convert("RGB")
+            imgs.append(img)
         except Exception:
-            text = ""
-    return (text or "").strip(), images
+            pass
+    else:
+        text = data.decode("utf-8","ignore")
 
-def ensure_notes(pasted, uploaded):
-    txt = (pasted or "").strip()
-    imgs: List[Tuple[str, bytes]] = []
-    if uploaded:
-        t, ii = read_file(uploaded)
-        if t: txt = (txt + "\n" + t).strip() if txt else t
-        if ii: imgs = ii
-        ss.last_title = uploaded.name
-    if len(txt) < 5 and not imgs:
-        st.warning("Your notes look empty. Paste text or upload a readable file.")
-        st.stop()
-    ss.notes_text = txt
-    return txt, imgs
+    return (text or "").strip(), imgs
 
-def adaptive_quiz_count(txt: str) -> int:
-    return max(3, min(20, len(txt.split()) // 180))
+def images_to_b64(imgs: List[Image.Image]) -> List[str]:
+    out = []
+    for im in imgs:
+        buf = io.BytesIO()
+        im.save(buf, format="PNG")
+        out.append(base64.b64encode(buf.getvalue()).decode("utf-8"))
+    return out
 
-# =================================
-# PAYWALL (until LS is fully live)
-# =================================
-if not ss.dev_unlocked:
+# --------------------------- PAYWALL ---------------------------
+def show_paywall():
     st.markdown("""
-    <div class="paywrap"><div class="paywall">
-      <h1>⚡ Zentra — AI Study Buddy</h1>
-      <p class="sub">Unlock your personal AI buddy for <b>$5.99/month</b> • <span class="badge">3-day free trial</span> • Cancel anytime</p>
+<div class="paywrap">
+  <div class="paycard">
+    <div class="paytitle">⚡ Zentra — AI Study Buddy</div>
+    <div class="paystrap">
+      <span>Unlock your Study Buddy for <b>$5.99/month</b></span>
+      <span class="badge">3-day free trial</span>
+      <span class="badge">Cancel anytime</span>
+    </div>
+    <div class="list">
+      <ul>
+        <li>📄 Smart Summaries → exam-ready notes</li>
+        <li>🧠 Flashcards → active recall Q/A</li>
+        <li>🎯 Quizzes → MCQs with instant scoring & explanations</li>
+        <li>📝 Mock Exams → MCQ + short + long + fill-in, graded with feedback</li>
+        <li>💬 Ask Zentra → your on-demand tutor</li>
+      </ul>
+    </div>
+    <div style="display:flex; gap:12px; align-items:center;">
+      <a class="primary-btn" href="https://zentraai.lemonsqueezy.com/buy/XXXXXXXX" target="_blank">Subscribe Now</a>
+      <a class="secondary-btn" href="https://zentraai.lemonsqueezy.com/buy/XXXXXXXX" target="_blank">Secure checkout</a>
+    </div>
+    <div class="list" style="margin-top:18px;">
+      <b>How Zentra helps you</b>
+      <ul>
+        <li>Cut revision time with concise notes that actually cover exam points</li>
+        <li>Practice targeted quizzes & sit graded mocks to spot weak topics</li>
+        <li>Ask anything, anytime — like a friendly tutor on demand</li>
+      </ul>
+    </div>
+  </div>
+</div>
+""", unsafe_allow_html=True)
 
-      <div class="paygrid">
-        <div class="paycard">
-          <ul>
-            <li>📄 Smart Summaries → exam-ready notes</li>
-            <li>🧠 Flashcards → active recall Q/A (tap to reveal)</li>
-            <li>🎯 Quizzes → MCQs with instant scoring & explanations</li>
-            <li>📝 Mock Exams → MCQ + short + long + fill-in, graded with feedback</li>
-            <li>💬 Ask Zentra → your on-demand tutor</li>
-          </ul>
-          <div class="btnrow">
-            <a class="btn-sub" href="https://zentraai.lemonsqueezy.com/buy/XXXXXXXX" target="_blank">Subscribe Now</a>
-            <span class="badge">Secure checkout</span>
-          </div>
-        </div>
-
-        <div class="paycard">
-          <b>How Zentra helps you</b>
-          <ul>
-            <li>Upload notes or PDFs (even with diagrams)</li>
-            <li>Auto-generated summaries & flashcards</li>
-            <li>Drill with quizzes & sit graded mocks</li>
-            <li>Target weak topics with clear feedback</li>
-            <li>Learn faster → recall more → score higher</li>
-          </ul>
-        </div>
-      </div>
-    </div></div>
-    """, unsafe_allow_html=True)
-
-    # Temporary dev unlock button (remove after Lemon Squeezy approves)
     if st.button("🚪 Dev Login (Temp)"):
         ss.dev_unlocked = True
-        st.rerun()
-    st.stop()
+        st.experimental_rerun()
 
-# ======================
-# SIDEBAR (collapsible)
-# ======================
-with st.sidebar:
-    st.markdown('<div class="sidebar-card"><div class="sidebar-title">🧰 Zentra Toolkit</div><div class="sidebar-small">Turn your notes into a complete toolkit: summaries, flashcards, quizzes, mocks, and a tutor — all in one place.</div></div>', unsafe_allow_html=True)
-    with st.expander("💡 How Zentra helps you", True):
-        st.markdown("- Turn notes into **summaries & flashcards**\n- Drill with **quizzes** and get instant **feedback**\n- Sit **mock exams** with grading & tips\n- Ask Zentra anything, anytime")
-    st.markdown("### 🗂️ History")
-    st.caption("Recent Quizzes:"); st.write(ss.history_quiz or "—")
-    st.caption("Recent Mock Exams:"); st.write(ss.history_mock or "—")
-    st.markdown("---")
-    st.caption("⚠️ AI-generated help. Verify before exams.")
+# --------------------------- HELPERS ---------------------------
+def ensure_notes(pasted, uploaded):
+    txt = (pasted or "").strip()
+    imgs: List[Image.Image] = []
 
-# ==========
-# HERO
-# ==========
-st.markdown('<div class="hero"><h1>⚡ Zentra — Your Study Buddy</h1><p>Smarter notes → Better recall → Higher scores.</p></div>', unsafe_allow_html=True)
+    if uploaded:
+        text_file, images = read_file(uploaded)
+        if text_file:
+            txt = (txt + "\n" + text_file).strip() if txt else text_file
+        if images:
+            imgs = images
+        ss.last_title = uploaded.name
 
-# ====================
-# MAIN LAYOUT (2-cols)
-# ====================
-col_main, col_chat = st.columns([3, 1.35], gap="large")
+    ss.notes_text = txt
+    ss.extracted_images = imgs
 
-# ----------------
-# MAIN: uploader + tools
-# ----------------
-with col_main:
-    st.markdown('<div class="label">📁 Upload Your Notes</div>', unsafe_allow_html=True)
-    upc1, upc2 = st.columns([3,2], vertical_alignment="bottom")
-    with upc1:
-        with st.container():
-            st.markdown('<div class="card">', unsafe_allow_html=True)
-            uploaded = st.file_uploader("Drag and drop file here", type=["pdf","docx","txt","png","jpg","jpeg"], label_visibility="collapsed")
-            pasted = st.text_area("Paste your notes here…", height=180, label_visibility="collapsed")
-            st.markdown('</div>', unsafe_allow_html=True)
-    with upc2:
-        st.markdown('<div class="card">', unsafe_allow_html=True)
-        st.markdown("**Tip:** You can paste plain notes or upload a file. If your PDF includes diagrams, choose *Text + Images* when prompted.")
-        st.markdown('</div>', unsafe_allow_html=True)
+def start_request(tool: str):
+    """Begin a request: ask for process choice if a file is uploaded with images/potential diagrams; else run directly."""
+    ss.pending_tool = tool
+    # If no upload and only pasted notes -> no process choice needed
+    if not ss.uploaded_blob:
+        ss.process_choice = "text"
+    else:
+        # if we have extracted images, let user choose; else force text
+        ss.process_choice = None if (ss.extracted_images) else "text"
 
-    # ---- Study tool buttons ----
-    st.markdown('<div class="label" style="margin-top:14px">✨ Study Tools</div>', unsafe_allow_html=True)
-    st.markdown('<div class="tool-row">', unsafe_allow_html=True)
-    c1, c2, c3, c4, c5 = st.columns(5)
-    go_summary = c1.button("📄 Summaries", help="Turn your notes into concise, exam-ready bullets.")
-    go_cards   = c2.button("🧠 Flashcards", help="Active-recall Q/A. Tap to reveal answers.")
-    go_quiz    = c3.button("🎯 Quizzes", help="MCQs with instant explanations.")
-    go_mock    = c4.button("📝 Mock Exams", help="Full exam: MCQ + short + long + fill. Graded.")
-    open_chat  = c5.button("💬 Ask Zentra", help="Ask concepts, line-by-line help, or study plans.")
-    st.markdown('</div>', unsafe_allow_html=True)
+def continue_request():
+    """Run the pending tool using the selected process choice."""
+    if not ss.pending_tool: return
+    choice = ss.process_choice or "text"
+    text = ss.notes_text
+    imgs = ss.extracted_images if choice == "vision" else []
 
-    # Out container (keeps layout stable)
-    out = st.container()
-
-    # ========= PRE-TOOL CHOICE HANDLER =========
-    def start_tool(which: str):
-        """Handle pre-tool flow: ensure notes, then require 'process choice' if a file is uploaded."""
-        text, imgs = ensure_notes(pasted, uploaded)
-        # If a file (of any type) is uploaded, ask: text vs vision
-        if uploaded is not None and ss.process_choice is None:
-            ss.pending_tool = which
-            ss.temp_text, ss.temp_images = text, imgs
-            st.rerun()
+    # unify prompt helper
+    def call_smart(prompt_text: str) -> str:
+        if choice == "vision" and imgs:
+            return llm_vision(prompt_text, images_to_b64(imgs))
         else:
-            run_tool(which, ss.process_choice or "text", text)
+            return llm_text(prompt_text)
 
-    # Render the choice bar only when needed
-    if ss.pending_tool and ss.process_choice is None:
-        with st.container():
-            st.markdown('<div class="choice">', unsafe_allow_html=True)
-            st.markdown(f"**How should Zentra process your file?** (for: `{ss.last_title}`)")
-            choice = st.radio(
-                "Processing mode",
-                ["Text only", "Text + Images/Diagrams"],
-                horizontal=True,
-                label_visibility="collapsed",
-                key="choice_radio"
-            )
-            cont_label = {
-                "summary":"Continue → Summaries",
-                "cards":"Continue → Flashcards",
-                "quiz":"Continue → Quizzes",
-                "mock":"Continue → Mock Exam",
-            }.get(ss.pending_tool, "Continue")
-            if st.button(cont_label):
-                ss.process_choice = "vision" if "Images" in choice else "text"
-                # run and clear
-                run_tool(ss.pending_tool, ss.process_choice, ss.temp_text)
-                ss.pending_tool = None
-                ss.temp_text, ss.temp_images = "", []
-            st.markdown('</div>', unsafe_allow_html=True)
+    out = st.container()
+    with out:
+        if ss.pending_tool == "summary":
+            with st.spinner("Generating summary…"):
+                prompt = f"Summarize into clear exam-ready bullet points. Cover key definitions, formulas, steps, and examples.\n\nNOTES:\n{text[:20000]}"
+                res = call_smart(prompt)
+            st.subheader("✅ Summary"); st.markdown(res or "_(empty)_")
 
-    # ========= TOOL EXECUTION =========
-    def run_tool(which: str, mode: str, text: str):
-        if which == "summary":
-            do_summary(text, mode)
-        elif which == "cards":
-            do_cards(text, mode)
-        elif which == "quiz":
-            do_quiz(text, mode)
-        elif which == "mock":
-            do_mock(text, mode)
+        elif ss.pending_tool == "cards":
+            with st.spinner("Creating flashcards…"):
+                prompt = ("Create concise Q/A flashcards from these notes. "
+                          "Return JSON with a list `cards`, where each item has `q` and `a`. "
+                          "8–16 cards. Keep answers short.")
+                res = call_smart(prompt + f"\n\nNOTES:\n{text[:20000]}")
+            cards: List[Dict[str,str]] = []
+            try:
+                import json
+                cards = json.loads(res if res.strip().startswith("{") else
+                                   res[res.find("{"): res.rfind("}")+1])["cards"]
+            except Exception:
+                # fallback split
+                for chunk in res.split("\n\n"):
+                    if ":" in chunk:
+                        q = chunk.split("\n")[0]
+                        a = "\n".join(chunk.split("\n")[1:])
+                        cards.append({"q":q.strip(), "a":a.strip()})
+            st.subheader("🧠 Flashcards")
+            for i, c in enumerate(cards[:20]):
+                key = f"reveal_{i}"
+                col1, col2 = st.columns([4,1])
+                with col1: st.markdown(f"**Q{i+1}.** {c.get('q','')}")
+                with col2:
+                    if st.button("Reveal", key=key):
+                        ss[key] = True
+                if ss.get(key): st.info(c.get("a",""))
 
-    # ---------- Tool implementations ----------
-    def do_summary(txt: str, mode: str):
-        with st.spinner("Generating summary…"):
-            vision_hint = "Consider diagrams/figures when inferring key points." if mode == "vision" else "Ignore images/figures."
-            prompt = f"""Create clear, exam-ready bullet summaries. {vision_hint}
-Be concise, factual, and well-structured.
-Notes:
-{txt}
-"""
-            out_text = ask_llm_text(prompt)
-        out.subheader("✅ Summary")
-        out.markdown(out_text or "_(empty)_")
+        elif ss.pending_tool == "quiz":
+            with st.spinner("Building quiz…"):
+                qn = max(6, min(16, len(text.split())//160))
+                prompt = (f"Create {qn} multiple-choice questions (A–D) from the notes. "
+                          "Return strict JSON: {\"questions\":[{\"q\":\"...\",\"choices\":[\"A) ...\",\"B) ...\",\"C) ...\",\"D) ...\"],\"answer\":\"A\",\"explanation\":\"...\"}, ...]}")
+                res = call_smart(prompt + f"\n\nNOTES:\n{text[:20000]}")
+            import json
+            questions = []
+            try:
+                j = json.loads(res if res.strip().startswith("{") else res[res.find("{"):res.rfind("}")+1])
+                questions = j["questions"]
+            except Exception:
+                st.error("Couldn't parse quiz. Try again.")
+                questions = []
 
-    def do_cards(txt: str, mode: str):
-        with st.spinner("Generating flashcards…"):
-            vision_hint = "If diagrams likely exist, turn them into Q prompts." if mode == "vision" else "Base only on text."
-            prompt = f"""Return JSON with an array 'cards' of flashcards; each has 'q' and 'a'.
-1 concept per card. {vision_hint}
-Limit to 12 cards max.
+            st.subheader("🎯 Quiz")
+            answers = []
+            for i, q in enumerate(questions):
+                st.markdown(f"**Q{i+1}. {q['q']}**")
+                picked = st.radio("", ["A","B","C","D"], horizontal=True, key=f"quiz_{i}")
+                answers.append(picked)
 
-Notes:
-{txt}
-JSON ONLY."""
-            raw = ask_llm_text(prompt)
-        cards = []
-        try:
-            data = json.loads(raw)
-            cards = data.get("cards") or []
-        except Exception:
-            # Fallback: split lines
-            cards = [{"q": line.strip(), "a": "Answer"} for line in raw.split("\n") if line.strip()][:10]
-
-        out.subheader("🧠 Flashcards")
-        if not cards:
-            out.info("No cards generated.")
-            return
-        # reveal-on-click via expanders
-        for i, c in enumerate(cards, 1):
-            with st.expander(f"Card {i}: {c.get('q','(blank)')}"):
-                st.markdown(c.get("a","(no answer)"))
-
-    def do_quiz(txt: str, mode: str):
-        with st.spinner("Building quiz…"):
-            n = adaptive_quiz_count(txt)
-            vision_hint = "Consider diagrams if relevant to the question topics." if mode == "vision" else "Ignore diagrams."
-            prompt = f"""Create a multiple-choice quiz of {n} questions.
-Return strict JSON with:
-{{"questions":[{{"q":"...", "choices":["A) ...","B) ...","C) ...","D) ..."], "answer":"A", "explanation":"..."}} ... ]}}
-
-Guidelines:
-- Four options A–D for each.
-- Balanced difficulty, unambiguous answers.
-- {vision_hint}
-
-Notes:
-{txt}
-JSON ONLY."""
-            raw = ask_llm_text(prompt)
-        try:
-            quiz = json.loads(raw).get("questions", [])
-        except Exception:
-            quiz = []
-
-        if not quiz:
-            out.warning("Could not generate a structured quiz. Try again with clearer notes.")
-            return
-
-        out.subheader("🎯 Quiz")
-        with st.form("quiz_form", clear_on_submit=False):
-            picks = []
-            for i, q in enumerate(quiz, 1):
-                st.markdown(f"**Q{i}. {q['q']}**")
-                # choices arrive as ["A) ...", ...] — show as radio
-                options = q["choices"]
-                pick = st.radio(f"Pick {i}", ["A","B","C","D"], horizontal=True, key=f"quiz_{i}")
-                st.caption(" ".join(options))
-                st.markdown("---")
-                picks.append(pick)
-
-            submitted = st.form_submit_button("Submit Quiz")
-            if submitted:
+            if st.button("Submit Quiz"):
                 correct = 0
-                res_lines = []
-                for i,(q,p) in enumerate(zip(quiz,picks),1):
-                    ans = q["answer"].strip()
-                    ok = (p == ans)
-                    if ok: correct += 1
-                    res_lines.append(f"**Q{i}** — Your: **{p}** | Answer: **{ans}**  \n_{q.get('explanation','')}_" )
-                score = round(100*correct/len(quiz))
-                st.success(f"Score: **{score}/100**  ({correct} / {len(quiz)})")
-                st.markdown("\n\n".join(res_lines))
+                wrongs = []
+                for i, q in enumerate(questions):
+                    if answers[i] == q["answer"]:
+                        correct += 1
+                    else:
+                        wrongs.append((i,q))
+                score = round((correct/len(questions))*100)
+                st.success(f"Score: **{score}** / 100")
+                if wrongs:
+                    with st.expander("Review mistakes"):
+                        for i,q in wrongs:
+                            st.markdown(f"- **Q{i+1}** Correct: **{q['answer']}**  \nExplanation: {q.get('explanation','')}")
                 ss.history_quiz.append(f"{ss.last_title} — {score}/100")
 
-    def do_mock(txt: str, mode: str):
-        out.subheader("📝 Mock Exam")
-        with st.form("mock_form", clear_on_submit=False):
-            diff = st.radio("Select difficulty", ["Easy","Standard","Hard"], horizontal=True, key="mock_diff")
-            st.caption("MCQ + Short + Long + Fill-in. Submit to grade out of 100.")
-            build_prompt = f"""Create a mock exam as JSON with:
-{{
- "mcq":[{{"q":"...", "choices":["A) ...","B) ...","C) ...","D) ..."], "answer":"A"}} x5],
- "short":[{{"q":"...","sample_answer":"..."}} x2],
- "long":[{{"q":"...","sample_answer":"..."}} x1],
- "fill":[{{"q":"...","answer":"..."}} x2]
-}}
-Difficulty: {diff}. Keep questions unambiguous, exam-like.
-{"Consider diagrams if relevant." if mode=="vision" else "Ignore diagrams."}
+        elif ss.pending_tool == "mock":
+            st.subheader("📝 Mock Exam")
+            diff = st.radio("Select difficulty", ["Easy","Standard","Hard"], horizontal=True)
+            if st.button("Prepare mock"):
+                with st.spinner("Preparing mock…"):
+                    target_total = 60 if diff=="Easy" else (80 if diff=="Standard" else 100)
+                    prompt = (
+                        "Create a mock exam with: 6 MCQs (A–D), 2 short-answer, 1 long-answer, 2 fill-in.\n"
+                        "Return strict JSON:\n"
+                        "{ \"mcq\":[{\"q\":\"...\",\"choices\":[\"A) ...\",\"B) ...\",\"C) ...\",\"D) ...\"],\"answer\":\"B\",\"explanation\":\"...\"}, ...],"
+                        "  \"short\":[{\"q\":\"...\",\"answer\":\"...\"}, ...],"
+                        "  \"long\":[{\"q\":\"...\",\"answer\":\"...\"}],"
+                        "  \"fill\":[{\"q\":\"...\",\"answer\":\"...\"}, ...] }"
+                    )
+                    res = call_smart(prompt + f"\n\nNOTES:\n{text[:20000]}")
+                import json
+                try:
+                    mk = json.loads(res if res.strip().startswith("{") else res[res.find("{"):res.rfind("}")+1])
+                except Exception:
+                    st.error("Couldn't parse mock. Try again.")
+                    return
 
-Notes:
-{txt}
-JSON ONLY."""
-            with st.spinner("Preparing mock…"):
-                raw = ask_llm_text(build_prompt)
-            try:
-                mock = json.loads(raw)
-            except Exception:
-                st.error("Mock could not be generated. Try again.")
-                return
+                with st.form("mock_form"):
+                    st.caption("Answer all sections below, then submit for grading.")
+                    picks = []
+                    for i, q in enumerate(mk.get("mcq",[])[:12]):
+                        st.markdown(f"**MCQ {i+1}. {q['q']}**")
+                        picks.append(st.radio("", ["A","B","C","D"], horizontal=True, key=f"mk_mcq_{i}"))
 
-            # Render inputs
-            mcq_ans = []
-            st.markdown("#### MCQs")
-            for i, q in enumerate(mock.get("mcq", [])[:5], 1):
-                st.markdown(f"**Q{i}. {q['q']}**")
-                pick = st.radio(f"Pick {i}", ["A","B","C","D"], horizontal=True, key=f"m_mcq_{i}")
-                st.caption(" ".join(q["choices"]))
-                st.markdown("---")
-                mcq_ans.append(pick)
+                    s_ans = []
+                    for i, q in enumerate(mk.get("short",[])[:4]):
+                        s_ans.append(st.text_area(f"Short {i+1}: {q['q']}", key=f"mk_short_{i}"))
 
-            st.markdown("#### Short Answers")
-            short_ans = []
-            for i, q in enumerate(mock.get("short", [])[:2], 1):
-                short_ans.append(st.text_area(f"Short {i}: {q['q']}", key=f"m_short_{i}"))
+                    l_ans = []
+                    for i, q in enumerate(mk.get("long",[])[:2]):
+                        l_ans.append(st.text_area(f"Long {i+1}: {q['q']}", key=f"mk_long_{i}"))
 
-            st.markdown("#### Long Answer")
-            long_q = (mock.get("long") or [{"q":"(missing)"}])[0]["q"]
-            long_ans = st.text_area(f"Essay: {long_q}", key="m_long")
+                    f_ans = []
+                    for i, q in enumerate(mk.get("fill",[])[:6]):
+                        f_ans.append(st.text_input(f"Fill-in {i+1}: {q['q']}", key=f"mk_fill_{i}"))
 
-            st.markdown("#### Fill-in")
-            fill_ans = []
-            for i, q in enumerate(mock.get("fill", [])[:2], 1):
-                fill_ans.append(st.text_input(f"Fill {i}: {q['q']}", key=f"m_fill_{i}"))
+                    submitted = st.form_submit_button("Submit Mock")
+                    if submitted:
+                        # Compute scale based on size of mock
+                        total_items = len(picks) + len(s_ans) + len(l_ans) + len(f_ans)
+                        scale = min(100, max(40, math.ceil(total_items/2)*10))  # multiple of 10, reasonable range
 
-            submitted = st.form_submit_button("Submit Mock for Grading")
-            if submitted:
-                # Grade via LLM (no answer key displayed to student)
-                grading_prompt = f"""You are Zentra, a strict but fair examiner.
-Grade the student's mock out of 100 with a clear breakdown:
-- Section scores (MCQ / Short / Long / Fill)
-- Strengths
-- Weak areas
-- Targeted advice
+                        # MCQ auto-score
+                        correct = 0
+                        for i, q in enumerate(mk["mcq"]):
+                            if i < len(picks) and picks[i] == q["answer"]:
+                                correct += 1
+                        mcq_score = round((correct/max(1,len(mk["mcq"][:len(picks)])))* (scale*0.4))
 
-STUDENT ANSWERS:
-MCQs: {mcq_ans}
-Short: {short_ans}
-Long: {long_ans}
-Fill: {fill_ans}
+                        # Rest via LLM grading
+                        grading_prompt = f"""
+You are a strict but fair examiner.
+Grade SHORT, LONG, FILL answers against the official answers.
+Return JSON: {{"short":{{"score":X,"feedback":"..."}}, "long":{{"score":Y,"feedback":"..."}}, "fill":{{"score":Z,"feedback":"..."}}, "overall_feedback":"..."}}.
+The maximum combined score (short+long+fill) should be {scale - mcq_score}.
+OFFICIAL ANSWERS:
+SHORT: {mk.get("short",[])}
+LONG: {mk.get("long",[])}
+FILL: {mk.get("fill",[])}
+STUDENT:
+SHORT: {s_ans}
+LONG: {l_ans}
+FILL: {f_ans}
+"""
+                        try:
+                            import json
+                            g = llm_text(grading_prompt, system="Grade fairly. Be concise.")
+                            gjson = json.loads(g if g.strip().startswith("{") else g[g.find("{"):g.rfind("}")+1])
+                        except Exception:
+                            gjson = {"short":{"score": int((scale-mcq_score)*0.3), "feedback":"—"},
+                                     "long":{"score": int((scale-mcq_score)*0.5), "feedback":"—"},
+                                     "fill":{"score": int((scale-mcq_score)*0.2), "feedback":"—"},
+                                     "overall_feedback":"—"}
 
-ORIGINAL MOCK (for reference):
-{json.dumps(mock)}
+                        total = mcq_score + gjson["short"]["score"] + gjson["long"]["score"] + gjson["fill"]["score"]
+                        total = min(scale, total)
+                        st.success(f"Final Score: **{total} / {scale}**")
+                        with st.expander("Breakdown & Feedback", expanded=True):
+                            st.write(f"MCQ: {mcq_score}")
+                            st.write(f"Short: {gjson['short']['score']} — {gjson['short']['feedback']}")
+                            st.write(f"Long: {gjson['long']['score']} — {gjson['long']['feedback']}")
+                            st.write(f"Fill-in: {gjson['fill']['score']} — {gjson['fill']['feedback']}")
+                            st.write(f"Overall: {gjson.get('overall_feedback','')}")
+                        ss.history_mock.append(f"{ss.last_title} — {total}/{scale}")
 
-Return concise feedback. Start with a single line: "Score: NN/100"."""
-                with st.spinner("Grading…"):
-                    result = ask_llm_text(grading_prompt)
-                st.success("✅ Mock graded")
-                st.markdown(result)
-                # Extract first number for history if present
-                first_line = (result.splitlines() or [""])[0]
-                ss.history_mock.append(f"{ss.last_title} — {first_line}")
+    # reset pending
+    ss.pending_tool = None
+    ss.process_choice = None
 
-    # --- Button actions (defer running until choice made) ---
-    if go_summary: start_tool("summary")
-    if go_cards:   start_tool("cards")
-    if go_quiz:    start_tool("quiz")
-    if go_mock:    start_tool("mock")
 
-# ----------------
-# CHAT COLUMN
-# ----------------
+# --------------------------- APP ---------------------------
+if not ss.dev_unlocked:
+    show_paywall()
+    st.stop()
+
+# --------- HERO ---------
+st.markdown('<div class="hero"><h1>⚡ Zentra — Your Study Buddy</h1><p>Smarter notes → Better recall → Higher scores.</p></div>', unsafe_allow_html=True)
+
+# --------- SIDEBAR (fancy + history + delete) ---------
+with st.sidebar:
+    st.markdown('<div class="sb-card"><div class="sb-title">🧰 Zentra Toolkit <span class="sb-chip">study smarter</span></div><div style="opacity:.9; margin-top:6px;">Turn your notes into a complete toolkit: summaries, flashcards, quizzes, mocks, and a tutor — all in one place.</div></div>', unsafe_allow_html=True)
+    with st.expander("💡 How Zentra helps you"):
+        st.markdown("- Cut revision time with **concise notes** that still cover the exam.\n- Drill with **smart quizzes** and get instant explanations.\n- Sit **graded mock exams** and learn exactly what to fix.\n- Ask anything, anytime — like a personal tutor.")
+    st.markdown("### 🗂 History")
+    st.caption("Recent Quizzes:"); st.write(ss.history_quiz or "—")
+    st.caption("Recent Mock Exams:"); st.write(ss.history_mock or "—")
+    colA, colB = st.columns(2)
+    if colA.button("Clear quizzes"):
+        ss.history_quiz = []
+    if colB.button("Clear mocks"):
+        ss.history_mock = []
+    st.markdown("---")
+    st.caption("AI-generated help. Verify before exams.")
+
+# --------- MAIN LAYOUT ---------
+col_main, col_chat = st.columns([3, 1.35], gap="large")
+
+with col_main:
+    st.markdown("### 📁 Upload Your Notes")
+    up_left, _ = st.columns([3,1])
+    with up_left:
+        uploaded = st.file_uploader("Drag and drop file here", type=["pdf","docx","txt","png","jpg","jpeg"], label_visibility="collapsed")
+        pasted = st.text_area("Paste your notes here…", height=180, label_visibility="collapsed")
+
+    # Prepare state from inputs
+    if uploaded or pasted:
+        ensure_notes(pasted, uploaded)
+
+    # Tool buttons
+    st.markdown("### ✨ Study Tools")
+    st.markdown('<div class="tool-row">', unsafe_allow_html=True)
+    c1,c2,c3,c4,c5 = st.columns(5)
+    go_summary = c1.button("📄 Summaries", help="Exam-ready bullets.")
+    go_cards   = c2.button("🧠 Flashcards", help="Active recall Q/A (tap to reveal).")
+    go_quiz    = c3.button("🎯 Quizzes", help="MCQs with instant scoring & explanations.")
+    go_mock    = c4.button("📝 Mock Exams", help="Full exam: MCQ + short + long + fill. Graded.")
+    open_chat  = c5.button("💬 Ask Zentra", help="Tutor on demand.")
+    st.markdown('</div>', unsafe_allow_html=True)
+
+    # Start requests (defer execution until we have process choice)
+    if go_summary: start_request("summary")
+    if go_cards:   start_request("cards")
+    if go_quiz:    start_request("quiz")
+    if go_mock:    start_request("mock")
+    if open_chat:  ss.chat_open = True
+
+    # If a process choice is needed, ask it (without shifting layout)
+    if ss.pending_tool and ss.process_choice is None:
+        st.markdown('<div class="process-bar">', unsafe_allow_html=True)
+        st.markdown(f"**How should Zentra process your file?**  _(for: {ss.uploaded_name})_")
+        colx, coly = st.columns([1,3])
+        with coly:
+            pick = st.radio("", ["Text only", "Text + Images/Diagrams"], horizontal=True, index=0, label_visibility="collapsed")
+        st.markdown('</div>', unsafe_allow_html=True)
+        if st.button(f"Continue → {ss.pending_tool.capitalize()}"):
+            ss.process_choice = "vision" if pick.startswith("Text +") else "text"
+            st.experimental_rerun()
+
+    # Output container — fixed position so UI doesn’t jump down
+    with st.container():
+        st.markdown('<div class="output">', unsafe_allow_html=True)
+        if ss.pending_tool and ss.process_choice:  # run the tool now
+            continue_request()
+        else:
+            st.caption("Results will appear here.")
+        st.markdown('</div>', unsafe_allow_html=True)
+
+# --------- CHAT ---------
 with col_chat:
-    st.markdown("### 💬 Ask Zentra")
-    c1, c2 = st.columns([1,1], vertical_alignment="center")
-    if c1.button("Close"): ss.chat_open = False; st.rerun()
-    if c2.button("Clear"): ss.messages = []; st.rerun()
-
     if ss.chat_open:
-        st.markdown('<div class="chat-wrap"><div class="chat-box" id="chat-box">', unsafe_allow_html=True)
-        # Show messages
+        st.markdown("### 💬 Ask Zentra")
+        topc1, topc2 = st.columns(2)
+        if topc1.button("Close"): ss.chat_open=False; st.experimental_rerun()
+        if topc2.button("Clear"): ss.messages=[]; st.experimental_rerun()
+        ss.use_notes_in_chat = st.toggle("Use my notes context", value=False, help="Off by default so chat stays independent of uploaded files.")
+
+        # Chat history box
+        chat_html = '<div class="chatbox" id="chatbox">'
         for m in ss.messages:
-            role = "🧑‍🎓 You" if m["role"]=="user" else "🤖 Zentra"
-            st.markdown(f"<div class='chat-msg'><span class='chat-role'>{role}:</span>{m['content']}</div>", unsafe_allow_html=True)
-        st.markdown("</div></div>", unsafe_allow_html=True)
-        # Auto scroll
-        st.markdown("<script>var box=document.getElementById('chat-box'); if(box){box.scrollTop=box.scrollHeight;}</script>", unsafe_allow_html=True)
+            who = "🧑‍🎓 You" if m["role"]=="user" else "🤖 Zentra"
+            chat_html += f'<div class="msg"><span class="from">{who}:</span>{m["content"]}</div>'
+        chat_html += "</div><script>var b=document.getElementById('chatbox'); if(b){b.scrollTop=b.scrollHeight;}</script>"
+        st.markdown(chat_html, unsafe_allow_html=True)
 
         q = st.chat_input("Ask Zentra…")
         if q:
             ss.messages.append({"role":"user","content":q})
-            # Keep chat independent (no weird personal stuff)
-            prompt = f"""Answer as a helpful tutor. Only use the user's question.
-If it references the uploaded notes, you may use them; otherwise, do not invent any personal context.
-User: {q}
-Notes (if relevant): {ss.notes_text[:4000]}
-"""
-            ans = ask_llm_text(prompt, system="You are Zentra, a precise and calm tutor. No fluff, no personal guesses.")
+            try:
+                if ss.use_notes_in_chat and ss.notes_text:
+                    ans = llm_text(f"Use the NOTES as extra context. If the user's question is unrelated, ignore the notes.\n\nNOTES:\n{ss.notes_text[:12000]}\n\nUSER: {q}")
+                else:
+                    ans = llm_text(q, system="You are Zentra, a helpful study tutor. Answer clearly and briefly unless asked for detail.")
+            except Exception as e:
+                ans = f"Error: {e}"
             ss.messages.append({"role":"assistant","content":ans})
-            st.rerun()
+            st.experimental_rerun()
