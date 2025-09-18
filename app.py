@@ -1,13 +1,14 @@
-# app.py — Zentra (PRO BUILD • polished UI • fixed reruns • full tools + chat)
-# Requires Streamlit secrets:
-# OPENAI_API_KEY, SUPABASE_URL, SUPABASE_ANON_KEY, LEMON_CHECKOUT_URL
+# app.py — Zentra (PRO BUILD v2)
+# Full working: Upload → Summary / Flashcards / Quiz / Mock + side chat + polished paywall
+# Uses Streamlit Secrets:
+#   OPENAI_API_KEY, SUPABASE_URL, SUPABASE_ANON_KEY, LEMON_CHECKOUT_URL
 
-import os, io, base64, tempfile, re, time, traceback
+import os, io, base64, tempfile, re, time
 from typing import List, Tuple
 import streamlit as st
 
 # =========================
-# Secrets & Env
+# Secrets (from st.secrets)
 # =========================
 try:
     OPENAI_API_KEY     = st.secrets["OPENAI_API_KEY"]
@@ -18,14 +19,13 @@ except Exception:
     st.error("Missing secrets. Add OPENAI_API_KEY, SUPABASE_URL, SUPABASE_ANON_KEY, LEMON_CHECKOUT_URL.")
     st.stop()
 
-os.environ["OPENAI_API_KEY"] = OPENAI_API_KEY
-
-# Dev bypass ON until Lemon goes live
+# Dev bypass ON (until Lemon is live)
 DEV_BYPASS = True
 
 # =========================
-# Models & OpenAI client
+# OpenAI
 # =========================
+os.environ["OPENAI_API_KEY"] = OPENAI_API_KEY
 from openai import OpenAI
 _CLIENT = None
 MODEL_TEXT   = "gpt-4o-mini"
@@ -70,7 +70,7 @@ def ask_vision(prompt: str, images: List[Tuple[str, bytes]], text_hint: str) -> 
         return f"⚠️ Vision error: {e}"
 
 # =========================
-# Page config & CSS
+# Page config + CSS
 # =========================
 st.set_page_config(
     page_title="Zentra — AI Study Buddy",
@@ -81,7 +81,7 @@ st.set_page_config(
 
 st.markdown("""
 <style>
-/* Layout polish */
+/* Global polish */
 footer{visibility:hidden;height:0}
 .block-container{padding-top:0.6rem; padding-bottom:3rem; max-width:1200px;}
 html, body, [data-testid="stAppViewContainer"]{
@@ -90,22 +90,12 @@ html, body, [data-testid="stAppViewContainer"]{
               linear-gradient(180deg, #0b0f1a 0%, #0a0d17 100%) !important;
 }
 
-/* Nav */
-.navbar{
-  display:flex; align-items:center; justify-content:space-between;
-  background:#0e1117; border:1px solid #232b3a; border-radius:14px;
-  padding:10px 14px; margin:2px 0 10px;
-}
-.brand{font-weight:900; font-size:18px; color:#e8ecf7}
-.navpill{padding:6px 10px; border:1px solid #2b3550; border-radius:10px; font-size:12px; opacity:.9}
-.navright{display:flex; gap:8px; align-items:center}
-
 /* Hero */
 .hero{ background: linear-gradient(90deg,#6a11cb 0%,#2575fc 100%);
-  border-radius:18px; color:#fff; text-align:center; padding:20px 18px; margin:6px 0 12px;
+  border-radius:18px; color:#fff; text-align:center; padding:24px 18px; margin:6px 0 14px;
   box-shadow:0 8px 30px rgba(0,0,0,.25); }
-.hero h1{margin:0; font-size:38px; font-weight:900; letter-spacing:.3px;}
-.hero p{margin:4px 0 0; opacity:.92}
+.hero h1{margin:0; font-size:40px; font-weight:900; letter-spacing:.3px;}
+.hero p{margin:6px 0 0; opacity:.92}
 
 /* Paywall */
 .paywall{
@@ -124,33 +114,33 @@ html, body, [data-testid="stAppViewContainer"]{
 .subscribe-btn:hover{ background:#1842b7; transform: translateY(-1px); }
 .dev-link{display:block; margin-top:12px; font-size:13px; opacity:.75}
 
-/* Cards & inputs */
+/* Upload & tools */
 .upload-card{background:#0e1117; border:1px solid #232b3a; border-radius:16px; padding:16px; margin-bottom:10px;}
 .upload-title{font-weight:800; font-size:18px; margin-bottom:6px}
 textarea[aria-label="Paste your notes here…"]{min-height:180px}
-.section-title{font-weight:900; font-size:20px; margin:10px 0 12px;}
+.section-title{font-weight:900;font-size:20px;margin:10px 0 12px;}
 .tool-row .stButton>button{
   width:100%; border-radius:12px; border:1px solid #2b2f3a; padding:10px; background:#10141e; color:#e8ecf7; font-weight:800; white-space:nowrap;
 }
 .tool-row .stButton>button:hover{background:#141a27; border-color:#3a4252;}
+
+/* Results */
 .results-box{ border:1px solid #232b3a; background:#0e1117; border-radius:14px; padding:14px; min-height:160px; }
+
+/* Expander buttons (fix wrapping "Con\\ntinue") */
+.btn-row .stButton>button{
+  min-width:140px; white-space:nowrap; border-radius:10px; font-weight:800;
+}
 
 /* Chat */
 .chat-card{background:#0e1117; border:1px solid #232b3a; border-radius:14px; padding:10px;}
-.msguser{color:#9ecbff} .msgai{color:#c0d5ff}
-hr{border: none; border-top: 1px solid #222a3a; margin: 10px 0;}
+.chat-scroll{max-height:440px; overflow-y:auto; padding:4px 8px;}
+.chat-msg{margin:6px 0}
+.chat-role{opacity:.7; font-size:12px}
+.chat-user{color:#9ecbff}
+.chat-ai{color:#c0d5ff}
 </style>
 """, unsafe_allow_html=True)
-
-# =========================
-# Top Nav
-# =========================
-st.markdown(
-    '<div class="navbar"><div class="brand">⚡ Zentra</div>'
-    '<div class="navright"><span class="navpill">Active recall</span>'
-    '<span class="navpill">Autograded mocks</span><span class="navpill">On-demand tutor</span></div></div>',
-    unsafe_allow_html=True
-)
 
 # =========================
 # State
@@ -164,8 +154,8 @@ for k, v in {
     "history_mock": [],
     "notes_text": "",
     "last_title": "Untitled notes",
-    "pending_tool": None,         # 'summary'|'flash'|'quiz'|'mock'
-    "process_choice": None,       # 'Text only' | 'Text + Images/Diagrams'
+    "pending_tool": None,      # 'summary'|'flash'|'quiz'|'mock'
+    "process_choice": None,    # 'Text only' | 'Text + Images/Diagrams'
     "mock_diff": "Standard",
     "flash_state": {},
 }.items():
@@ -213,7 +203,7 @@ def ensure_notes(pasted, uploaded):
         if ii: imgs = ii
         ss.last_title = uploaded.name
     if len(txt) < 5 and not imgs:
-        st.warning("Looks empty. If your PDF is image-only, choose **Text + Images/Diagrams** or upload OCR text.")
+        st.warning("Your notes look empty. If your PDF is image-only, choose **Text + Images/Diagrams** or paste OCR text.")
         st.stop()
     ss.notes_text = txt
     return txt, imgs
@@ -235,7 +225,7 @@ def rounded_score_from_len(txt: str) -> int:
 st.markdown('<div class="hero"><h1>AI Study Buddy</h1><p>Smarter notes → Better recall → Higher scores.</p></div>', unsafe_allow_html=True)
 
 # =========================
-# Paywall (Dev bypass visible)
+# Paywall (Dev Login visible)
 # =========================
 if DEV_BYPASS and not ss.dev_unlocked:
     st.markdown(f"""
@@ -333,24 +323,25 @@ with col_main:
         uploaded = st.file_uploader("Upload file", type=["pdf","docx","txt","png","jpg","jpeg"], label_visibility="collapsed")
         pasted   = st.text_area("Paste your notes here…", height=180, label_visibility="collapsed")
     with up_right:
-        st.caption("If your file has diagrams, choose **Text + Images/Diagrams** below.")
+        st.caption("If your file has diagrams or images, choose **Text + Images/Diagrams** below.")
     st.markdown('</div>', unsafe_allow_html=True)
 
     # Tools
     st.markdown('<div class="section-title">✨ Study Tools</div>', unsafe_allow_html=True)
     st.markdown('<div class="tool-row">', unsafe_allow_html=True)
-    a,b,c,d,e = st.columns(5)
-    go_summary = a.button("📄 Summaries")
-    go_cards   = b.button("🧠 Flashcards")
-    go_quiz    = c.button("🎯 Quizzes")
-    go_mock    = d.button("📝 Mock Exams")
-    open_chat  = e.button("💬 Ask Zentra")
+    c1, c2, c3, c4, c5 = st.columns(5)
+    go_summary = c1.button("📄 Summaries")
+    go_cards   = c2.button("🧠 Flashcards")
+    go_quiz    = c3.button("🎯 Quizzes")
+    go_mock    = c4.button("📝 Mock Exams")
+    open_chat  = c5.button("💬 Ask Zentra")
     st.markdown('</div>', unsafe_allow_html=True)
 
     if open_chat:
         ss.chat_open = True
         st.rerun()
 
+    # One results box
     results_placeholder = st.empty()
 
     # Set pending tool
@@ -365,11 +356,18 @@ with col_main:
 
     if ss.pending_tool:
         with st.expander("How should Zentra process your file?", expanded=True):
-            ss.process_choice = st.radio("", ["Text only", "Text + Images/Diagrams"],
-                                         index=0, horizontal=True, label_visibility="collapsed")
-            x,y,_ = st.columns([1,1,6])
-            with x: go = st.button("Continue", type="primary", key="proc_go")
-            with y: cancel = st.button("Cancel", key="proc_cancel")
+            ss.process_choice = st.radio(
+                "",
+                options=["Text only", "Text + Images/Diagrams"],
+                index=0,
+                horizontal=True,
+                label_visibility="collapsed"
+            )
+            st.markdown('<div class="btn-row">', unsafe_allow_html=True)
+            b1, b2, _ = st.columns([1,1,5], vertical_alignment="center")
+            with b1: go = st.button("Continue ▶", type="primary", key="proc_go")
+            with b2: cancel = st.button("Cancel", key="proc_cancel")
+            st.markdown('</div>', unsafe_allow_html=True)
 
         if cancel:
             ss.pending_tool, ss.process_choice = None, None
@@ -382,20 +380,27 @@ with col_main:
             with results_placeholder.container():
                 st.markdown('<div class="results-box">', unsafe_allow_html=True)
 
+                def render_llm_output(title, out):
+                    st.subheader(title)
+                    if not out:
+                        st.error("No output received. Try again.")
+                    elif out.strip().startswith("⚠️"):
+                        st.error(out)
+                    else:
+                        st.markdown(out)
+
                 # ---------- SUMMARY ----------
                 if ss.pending_tool == "summary":
-                    st.subheader("✅ Summary")
                     with st.spinner("Generating summary…"):
                         prompt = f"""Summarize the following notes into **clean, exam-ready bullet points**.
 Cover definitions, theorems/laws, key steps, formulas, and 'must-know' facts. Be tight and complete.
 NOTES:
 {text}"""
                         out = ask_vision(prompt, imgs, text) if (include_images and imgs) else ask_llm(prompt)
-                    st.markdown(out or "_(no content)_")
+                    render_llm_output("✅ Summary", out)
 
                 # ---------- FLASHCARDS ----------
                 elif ss.pending_tool == "flash":
-                    st.subheader("🧠 Flashcards")
                     with st.spinner("Creating flashcards…"):
                         prompt = f"""Create high-quality flashcards that **cover all key points**.
 Return each card exactly as:
@@ -405,6 +410,7 @@ NOTES:
 {text}"""
                         raw = ask_vision(prompt, imgs, text) if (include_images and imgs) else ask_llm(prompt)
 
+                    st.subheader("🧠 Flashcards")
                     cards = []
                     for line in raw.splitlines():
                         s = line.strip().strip("-").strip()
@@ -414,7 +420,8 @@ NOTES:
                             cards[-1]["a"] = s.split(":",1)[1].strip()
 
                     if not cards:
-                        st.markdown(raw or "_(no content)_")
+                        if raw.strip().startswith("⚠️"): st.error(raw)
+                        else: st.markdown(raw or "_(no content)_")
                     else:
                         for i, card in enumerate(cards):
                             key_q = f"flash_reveal_{i}"
@@ -434,7 +441,6 @@ NOTES:
 
                 # ---------- QUIZ ----------
                 elif ss.pending_tool == "quiz":
-                    st.subheader("🎯 Quiz")
                     n = adaptive_quiz_count(text)
                     with st.spinner("Generating quiz…"):
                         prompt = f"""Create {n} multiple-choice questions (A–D).
@@ -446,6 +452,7 @@ NOTES:
 {text}"""
                         raw = ask_vision(prompt, imgs, text) if (include_images and imgs) else ask_llm(prompt)
 
+                    st.subheader("🎯 Quiz")
                     with st.form("quiz_form", clear_on_submit=False):
                         st.markdown(raw)
                         st.markdown("---")
@@ -532,36 +539,45 @@ MOCK + RUBRIC + ANSWER KEY:
 
                 st.markdown('</div>', unsafe_allow_html=True)
 
-            # close tool and refresh
+            # close tool + refresh
             ss.pending_tool, ss.process_choice = None, None
             st.rerun()
 
-# ---------- CHAT ----------
+# ---------- CHAT (fixed-height, scrollable box)
 with col_chat:
-    if ss.chat_open:
-        st.markdown("### 💬 Ask Zentra")
-        for m in ss.messages:
-            if m["role"] == "user":
-                st.markdown(f"🧑‍🎓 **You:** {m['content']}")
-            else:
-                st.markdown(f"🤖 **Zentra:** {m['content']}")
+    st.markdown("### 💬 Ask Zentra")
+    st.markdown('<div class="chat-card">', unsafe_allow_html=True)
+    chat_html = '<div class="chat-scroll" id="chat-scroll">'
+    for m in ss.messages:
+        role = '🧑‍🎓 <span class="chat-user">You</span>' if m["role"]=="user" else '🤖 <span class="chat-ai">Zentra</span>'
+        chat_html += f'<div class="chat-msg"><div class="chat-role">{role}</div><div>{m["content"]}</div></div>'
+    chat_html += "</div>"
+    st.markdown(chat_html, unsafe_allow_html=True)
 
-        user_q = st.chat_input("Type your message…")
-        if user_q:
-            ss.messages.append({"role":"user","content":user_q})
-            with st.spinner("Thinking…"):
-                reply = ask_llm(
-                    "You are **Zentra**. Answer clearly and briefly. "
-                    "Only reference uploaded notes if the user explicitly asks about them.\n\n"
-                    f"USER: {user_q}"
-                )
-            ss.messages.append({"role":"assistant","content":reply})
-            st.rerun()
+    user_q = st.chat_input("Type your message…")
+    if user_q:
+        ss.messages.append({"role":"user","content":user_q})
+        with st.spinner("Thinking…"):
+            reply = ask_llm(
+                "You are Zentra. Be clear and brief. "
+                "Only reference uploaded notes if the user explicitly asks about them.\n\n"
+                f"USER: {user_q}"
+            )
+        ss.messages.append({"role":"assistant","content":reply})
+        # auto-scroll to bottom & rerun
+        st.components.v1.html("""
+        <script>
+          const box = parent.document.querySelector('#chat-scroll');
+          if (box) { box.scrollTop = box.scrollHeight; }
+        </script>
+        """, height=0)
+        st.rerun()
 
-        cols = st.columns(2)
-        with cols[0]:
-            if st.button("Close"):
-                ss.chat_open = False; st.rerun()
-        with cols[1]:
-            if st.button("Clear"):
-                ss.messages = []; st.rerun()
+    cols = st.columns(2)
+    with cols[0]:
+        if st.button("Close"):
+            ss.chat_open = False; st.rerun()
+    with cols[1]:
+        if st.button("Clear"):
+            ss.messages = []; st.rerun()
+    st.markdown('</div>', unsafe_allow_html=True)
