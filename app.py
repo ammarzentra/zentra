@@ -1,41 +1,36 @@
-# app.py — Zentra (FINAL full build)
-# Uses Streamlit Secrets:
-#   OPENAI_API_KEY
-#   SUPABASE_URL
-#   SUPABASE_ANON_KEY
-#   LEMON_CHECKOUT_URL
-#
-# In Streamlit (Cloud): Settings → Secrets → paste your values (you already did).
-# Locally: create .streamlit/secrets.toml with the same keys.
+# app.py — Zentra (PRO BUILD • polished UI • fixed reruns • full tools + chat)
+# Requires Streamlit secrets:
+# OPENAI_API_KEY, SUPABASE_URL, SUPABASE_ANON_KEY, LEMON_CHECKOUT_URL
 
-import os, io, base64, tempfile, re, time
+import os, io, base64, tempfile, re, time, traceback
 from typing import List, Tuple
 import streamlit as st
 
 # =========================
-# SECRETS (from st.secrets)
+# Secrets & Env
 # =========================
 try:
-    OPENAI_API_KEY = st.secrets["OPENAI_API_KEY"]
-    SUPABASE_URL = st.secrets.get("SUPABASE_URL", "")
-    SUPABASE_ANON_KEY = st.secrets.get("SUPABASE_ANON_KEY", "")
+    OPENAI_API_KEY     = st.secrets["OPENAI_API_KEY"]
+    SUPABASE_URL       = st.secrets.get("SUPABASE_URL", "")
+    SUPABASE_ANON_KEY  = st.secrets.get("SUPABASE_ANON_KEY", "")
     LEMON_CHECKOUT_URL = st.secrets.get("LEMON_CHECKOUT_URL", "https://example.com")
 except Exception:
-    st.error("Missing secrets. Add OPENAI_API_KEY, SUPABASE_URL, SUPABASE_ANON_KEY, LEMON_CHECKOUT_URL in Streamlit Secrets.")
+    st.error("Missing secrets. Add OPENAI_API_KEY, SUPABASE_URL, SUPABASE_ANON_KEY, LEMON_CHECKOUT_URL.")
     st.stop()
 
-# Allow Dev Login bypass until Lemon is live
-ENABLE_DEV_BYPASS = True
+os.environ["OPENAI_API_KEY"] = OPENAI_API_KEY
+
+# Dev bypass ON until Lemon goes live
+DEV_BYPASS = True
 
 # =========================
-# MODELS & OPENAI CLIENT
+# Models & OpenAI client
 # =========================
-os.environ["OPENAI_API_KEY"] = OPENAI_API_KEY
 from openai import OpenAI
 _CLIENT = None
-MODEL_TEXT = "gpt-4o-mini"
+MODEL_TEXT   = "gpt-4o-mini"
 MODEL_VISION = "gpt-4o-mini"
-BASE_SYSTEM = "You are Zentra, a precise and supportive study buddy. Be concise, exam-oriented, and correct."
+BASE_SYSTEM  = "You are Zentra, a precise, supportive, exam-focused tutor. Be concise and correct."
 
 def _client() -> OpenAI:
     global _CLIENT
@@ -47,10 +42,11 @@ def ask_llm(prompt: str, system: str = BASE_SYSTEM) -> str:
     try:
         r = _client().chat.completions.create(
             model=MODEL_TEXT,
-            messages=[{"role":"system","content":system},{"role":"user","content":prompt}],
+            messages=[{"role":"system","content":system},
+                      {"role":"user","content":prompt}],
             temperature=0.4,
         )
-        return r.choices[0].message.content.strip()
+        return (r.choices[0].message.content or "").strip()
     except Exception as e:
         return f"⚠️ Model error: {e}"
 
@@ -69,12 +65,12 @@ def ask_vision(prompt: str, images: List[Tuple[str, bytes]], text_hint: str) -> 
             messages=[{"role":"user","content":parts}],
             temperature=0.4
         )
-        return r.choices[0].message.content.strip()
+        return (r.choices[0].message.content or "").strip()
     except Exception as e:
         return f"⚠️ Vision error: {e}"
 
 # =========================
-# PAGE CONFIG + CSS
+# Page config & CSS
 # =========================
 st.set_page_config(
     page_title="Zentra — AI Study Buddy",
@@ -82,9 +78,10 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
 )
+
 st.markdown("""
 <style>
-a[class*="viewerBadge"], div[class*="viewerBadge"], #ViewerBadgeContainer{display:none!important;}
+/* Layout polish */
 footer{visibility:hidden;height:0}
 .block-container{padding-top:0.6rem; padding-bottom:3rem; max-width:1200px;}
 html, body, [data-testid="stAppViewContainer"]{
@@ -92,13 +89,31 @@ html, body, [data-testid="stAppViewContainer"]{
               radial-gradient(900px 400px at 110% 10%, #1b2649 0%, transparent 55%),
               linear-gradient(180deg, #0b0f1a 0%, #0a0d17 100%) !important;
 }
+
+/* Nav */
+.navbar{
+  display:flex; align-items:center; justify-content:space-between;
+  background:#0e1117; border:1px solid #232b3a; border-radius:14px;
+  padding:10px 14px; margin:2px 0 10px;
+}
+.brand{font-weight:900; font-size:18px; color:#e8ecf7}
+.navpill{padding:6px 10px; border:1px solid #2b3550; border-radius:10px; font-size:12px; opacity:.9}
+.navright{display:flex; gap:8px; align-items:center}
+
+/* Hero */
+.hero{ background: linear-gradient(90deg,#6a11cb 0%,#2575fc 100%);
+  border-radius:18px; color:#fff; text-align:center; padding:20px 18px; margin:6px 0 12px;
+  box-shadow:0 8px 30px rgba(0,0,0,.25); }
+.hero h1{margin:0; font-size:38px; font-weight:900; letter-spacing:.3px;}
+.hero p{margin:4px 0 0; opacity:.92}
+
+/* Paywall */
 .paywall{
   background: rgba(17, 20, 32, 0.88);
   border: 1px solid #2c3550; border-radius: 22px; padding: 40px 28px; color:#e8ecf7;
-  text-align:center; margin:40px auto; max-width:820px; box-shadow: 0 20px 50px rgba(0,0,0,.40);
+  text-align:center; margin:26px auto; max-width:820px; box-shadow: 0 20px 50px rgba(0,0,0,.40);
 }
-.paywall h1{margin:0; font-size:48px; font-weight:900; letter-spacing:.3px;}
-.paywall p{margin:12px auto 18px; font-size:17px; opacity:.95; max-width:650px}
+.paywall h1{margin:0; font-size:44px; font-weight:900;}
 .pill{display:inline-block; padding:6px 12px; border-radius:999px; border:1px solid #3a4466; background:#12182a; font-size:13px; opacity:.95; margin-bottom:8px;}
 .features{text-align:left; margin:16px auto 6px; display:inline-block; font-size:15px; line-height:1.45; max-width:640px}
 .features li{margin:6px 0;}
@@ -108,45 +123,56 @@ html, body, [data-testid="stAppViewContainer"]{
 }
 .subscribe-btn:hover{ background:#1842b7; transform: translateY(-1px); }
 .dev-link{display:block; margin-top:12px; font-size:13px; opacity:.75}
-.hero{ background: linear-gradient(90deg,#6a11cb 0%,#2575fc 100%); border-radius:18px; color:#fff; text-align:center; padding:26px 18px; margin:6px 0 12px; box-shadow:0 8px 30px rgba(0,0,0,.25); }
-.hero h1{margin:0; font-size:40px; font-weight:900; letter-spacing:.3px;}
-.hero p{margin:6px 0 0; opacity:.92}
-.section-title{font-weight:900;font-size:22px;margin:10px 0 14px;}
+
+/* Cards & inputs */
 .upload-card{background:#0e1117; border:1px solid #232b3a; border-radius:16px; padding:16px; margin-bottom:10px;}
 .upload-title{font-weight:800; font-size:18px; margin-bottom:6px}
 textarea[aria-label="Paste your notes here…"]{min-height:180px}
+.section-title{font-weight:900; font-size:20px; margin:10px 0 12px;}
 .tool-row .stButton>button{
   width:100%; border-radius:12px; border:1px solid #2b2f3a; padding:10px; background:#10141e; color:#e8ecf7; font-weight:800; white-space:nowrap;
 }
 .tool-row .stButton>button:hover{background:#141a27; border-color:#3a4252;}
 .results-box{ border:1px solid #232b3a; background:#0e1117; border-radius:14px; padding:14px; min-height:160px; }
-.streamlit-expanderHeader{font-weight:700;}
+
+/* Chat */
 .chat-card{background:#0e1117; border:1px solid #232b3a; border-radius:14px; padding:10px;}
+.msguser{color:#9ecbff} .msgai{color:#c0d5ff}
 hr{border: none; border-top: 1px solid #222a3a; margin: 10px 0;}
 </style>
 """, unsafe_allow_html=True)
 
 # =========================
-# STATE
+# Top Nav
+# =========================
+st.markdown(
+    '<div class="navbar"><div class="brand">⚡ Zentra</div>'
+    '<div class="navright"><span class="navpill">Active recall</span>'
+    '<span class="navpill">Autograded mocks</span><span class="navpill">On-demand tutor</span></div></div>',
+    unsafe_allow_html=True
+)
+
+# =========================
+# State
 # =========================
 ss = st.session_state
 for k, v in {
-  "dev_unlocked": False,
-  "chat_open": False,
-  "messages": [],
-  "history_quiz": [],
-  "history_mock": [],
-  "notes_text": "",
-  "last_title": "Untitled notes",
-  "pending_tool": None,     # 'summary'|'flash'|'quiz'|'mock'
-  "process_choice": None,   # 'Text only' | 'Text + Images/Diagrams'
-  "mock_diff": "Standard",
-  "flash_state": {},
+    "dev_unlocked": False,
+    "chat_open": False,
+    "messages": [],
+    "history_quiz": [],
+    "history_mock": [],
+    "notes_text": "",
+    "last_title": "Untitled notes",
+    "pending_tool": None,         # 'summary'|'flash'|'quiz'|'mock'
+    "process_choice": None,       # 'Text only' | 'Text + Images/Diagrams'
+    "mock_diff": "Standard",
+    "flash_state": {},
 }.items():
-  if k not in ss: ss[k] = v
+    if k not in ss: ss[k] = v
 
 # =========================
-# FILE HANDLING
+# File handling
 # =========================
 def read_file(uploaded) -> Tuple[str, List[Tuple[str, bytes]]]:
     if not uploaded: return "", []
@@ -187,7 +213,7 @@ def ensure_notes(pasted, uploaded):
         if ii: imgs = ii
         ss.last_title = uploaded.name
     if len(txt) < 5 and not imgs:
-        st.warning("Looks empty. If your PDF is image-only, choose **Text + Images/Diagrams** OR upload OCR text.")
+        st.warning("Looks empty. If your PDF is image-only, choose **Text + Images/Diagrams** or upload OCR text.")
         st.stop()
     ss.notes_text = txt
     return txt, imgs
@@ -204,28 +230,28 @@ def rounded_score_from_len(txt: str) -> int:
     return 100
 
 # =========================
-# HERO
+# Hero
 # =========================
-st.markdown('<div class="hero"><h1>⚡ Zentra — AI Study Buddy</h1><p>Smarter notes → Better recall → Higher scores.</p></div>', unsafe_allow_html=True)
+st.markdown('<div class="hero"><h1>AI Study Buddy</h1><p>Smarter notes → Better recall → Higher scores.</p></div>', unsafe_allow_html=True)
 
 # =========================
-# PAYWALL (with Dev Login)
+# Paywall (Dev bypass visible)
 # =========================
-if ENABLE_DEV_BYPASS and not ss.dev_unlocked:
+if DEV_BYPASS and not ss.dev_unlocked:
     st.markdown(f"""
     <div class="paywall">
       <div class="pill">7-day free trial • Cancel anytime</div>
       <h1>Zentra — AI Study Buddy</h1>
-      <p>Turn messy notes into laser-focused study materials, flashcards, quizzes that teach, and graded mock exams — plus an on-demand tutor.</p>
+      <p>Turn messy notes into laser-focused summaries, flashcards, quizzes that teach, and graded mock exams — plus an on-demand tutor.</p>
       <a class="subscribe-btn" href="{LEMON_CHECKOUT_URL}" target="_blank">Subscribe — $5.99 / month</a>
       <a class="dev-link" href="#" onclick="window.parent.postMessage({{type:'devLogin'}}, '*'); return false;">(Dev login for testing)</a>
       <div class="features">
         <ul>
           <li>📄 Summaries — exam-ready bullets that cover what matters</li>
-          <li>🧠 Flashcards — reveal answers only when you’re ready</li>
-          <li>🎯 Quizzes — auto-scored, instant explanations</li>
+          <li>🧠 Flashcards — active recall, reveal when ready</li>
+          <li>🎯 Quizzes — auto-scored with key explanations</li>
           <li>📝 Mock Exams — MCQ + short + long + fill-in, graded</li>
-          <li>💬 Ask Zentra — your tutor, any topic</li>
+          <li>💬 Ask Zentra — your tutor for any topic</li>
         </ul>
       </div>
     </div>
@@ -233,7 +259,7 @@ if ENABLE_DEV_BYPASS and not ss.dev_unlocked:
 
     if st.button("🚪 Dev Login (Temporary)"):
         ss.dev_unlocked = True
-        st.experimental_rerun()
+        st.rerun()
 
     st.components.v1.html("""
     <script>
@@ -249,12 +275,12 @@ if ENABLE_DEV_BYPASS and not ss.dev_unlocked:
     st.stop()
 
 # =========================
-# SIDEBAR
+# Sidebar
 # =========================
 with st.sidebar:
     st.markdown("### 🌟 Why students love Zentra")
     st.write("Shrink long notes into tight summaries, drill key ideas with flashcards, and test yourself with quizzes & mocks that teach — all in one workspace.")
-    st.markdown('<span class="sidebar-chip">Active recall</span> <span class="sidebar-chip">Structured practice</span> <span class="sidebar-chip">Autograded mocks</span> <span class="sidebar-chip">On-demand tutor</span>', unsafe_allow_html=True)
+    st.caption("Active recall • Structured practice • Autograded mocks • On-demand tutor")
 
     st.markdown("### 📂 History")
     if ss.history_quiz:
@@ -268,7 +294,7 @@ with st.sidebar:
                     for j in range(len(orig)-1, -1, -1):
                         if orig[j] == item:
                             ss.history_quiz.pop(j); break
-                    st.experimental_rerun()
+                    st.rerun()
     else:
         st.caption("Recent Quizzes"); st.write("—")
 
@@ -283,18 +309,18 @@ with st.sidebar:
                     for j in range(len(orig)-1, -1, -1):
                         if orig[j] == item:
                             ss.history_mock.pop(j); break
-                    st.experimental_rerun()
+                    st.rerun()
     else:
         st.caption("Recent Mock Exams"); st.write("—")
 
     st.markdown("---")
     if st.button("Clear All History"):
         ss.history_quiz, ss.history_mock = [], []
-        st.experimental_rerun()
+        st.rerun()
     st.caption("Disclaimer: AI-generated. Verify before exams.")
 
 # =========================
-# LAYOUT: Main + Chat
+# Main layout
 # =========================
 col_main, col_chat = st.columns([3, 1.35], gap="large")
 
@@ -307,32 +333,31 @@ with col_main:
         uploaded = st.file_uploader("Upload file", type=["pdf","docx","txt","png","jpg","jpeg"], label_visibility="collapsed")
         pasted   = st.text_area("Paste your notes here…", height=180, label_visibility="collapsed")
     with up_right:
-        st.caption("Choose a tool below. If your file has diagrams, select **Text + Images/Diagrams** when prompted.")
+        st.caption("If your file has diagrams, choose **Text + Images/Diagrams** below.")
     st.markdown('</div>', unsafe_allow_html=True)
 
     # Tools
     st.markdown('<div class="section-title">✨ Study Tools</div>', unsafe_allow_html=True)
     st.markdown('<div class="tool-row">', unsafe_allow_html=True)
-    c1, c2, c3, c4, c5 = st.columns(5)
-    go_summary = c1.button("📄 Summaries")
-    go_cards   = c2.button("🧠 Flashcards")
-    go_quiz    = c3.button("🎯 Quizzes")
-    go_mock    = c4.button("📝 Mock Exams")
-    open_chat  = c5.button("💬 Ask Zentra")
+    a,b,c,d,e = st.columns(5)
+    go_summary = a.button("📄 Summaries")
+    go_cards   = b.button("🧠 Flashcards")
+    go_quiz    = c.button("🎯 Quizzes")
+    go_mock    = d.button("📝 Mock Exams")
+    open_chat  = e.button("💬 Ask Zentra")
     st.markdown('</div>', unsafe_allow_html=True)
 
     if open_chat:
         ss.chat_open = True
-        st.experimental_rerun()
+        st.rerun()
 
-    # Single results placeholder (prevents zombie boxes)
     results_placeholder = st.empty()
 
-    # Clicks -> set pending tool
-    if go_summary: ss.pending_tool, ss.process_choice = "summary", None; st.experimental_rerun()
-    if go_cards:   ss.pending_tool, ss.process_choice = "flash",   None; st.experimental_rerun()
-    if go_quiz:    ss.pending_tool, ss.process_choice = "quiz",    None; st.experimental_rerun()
-    if go_mock:    ss.pending_tool, ss.process_choice = "mock",    None; st.experimental_rerun()
+    # Set pending tool
+    if go_summary: ss.pending_tool, ss.process_choice = "summary", None; st.rerun()
+    if go_cards:   ss.pending_tool, ss.process_choice = "flash",   None; st.rerun()
+    if go_quiz:    ss.pending_tool, ss.process_choice = "quiz",    None; st.rerun()
+    if go_mock:    ss.pending_tool, ss.process_choice = "mock",    None; st.rerun()
 
     def collect_inputs():
         text, imgs = ensure_notes(pasted, uploaded)
@@ -340,43 +365,35 @@ with col_main:
 
     if ss.pending_tool:
         with st.expander("How should Zentra process your file?", expanded=True):
-            ss.process_choice = st.radio(
-                "",
-                options=["Text only", "Text + Images/Diagrams"],
-                index=0,
-                horizontal=True,
-                label_visibility="collapsed"
-            )
-            cc = st.columns([1,1,6])
-            with cc[0]:
-                continue_run = st.button("Continue", type="primary", key="proc_go")
-            with cc[1]:
-                cancel_run = st.button("Cancel", key="proc_cancel")
+            ss.process_choice = st.radio("", ["Text only", "Text + Images/Diagrams"],
+                                         index=0, horizontal=True, label_visibility="collapsed")
+            x,y,_ = st.columns([1,1,6])
+            with x: go = st.button("Continue", type="primary", key="proc_go")
+            with y: cancel = st.button("Cancel", key="proc_cancel")
 
-        if cancel_run:
+        if cancel:
             ss.pending_tool, ss.process_choice = None, None
-            st.experimental_rerun()
+            st.rerun()
 
-        if continue_run:
+        if go:
             text, imgs = collect_inputs()
             include_images = (ss.process_choice == "Text + Images/Diagrams")
 
-            # Render results inside single box
             with results_placeholder.container():
                 st.markdown('<div class="results-box">', unsafe_allow_html=True)
 
-                # ---------- SUMMARY
+                # ---------- SUMMARY ----------
                 if ss.pending_tool == "summary":
                     st.subheader("✅ Summary")
                     with st.spinner("Generating summary…"):
                         prompt = f"""Summarize the following notes into **clean, exam-ready bullet points**.
-Cover definitions, laws/theorems, key steps, formulas, and 'must-know' facts. Be tight and complete.
+Cover definitions, theorems/laws, key steps, formulas, and 'must-know' facts. Be tight and complete.
 NOTES:
 {text}"""
                         out = ask_vision(prompt, imgs, text) if (include_images and imgs) else ask_llm(prompt)
                     st.markdown(out or "_(no content)_")
 
-                # ---------- FLASHCARDS
+                # ---------- FLASHCARDS ----------
                 elif ss.pending_tool == "flash":
                     st.subheader("🧠 Flashcards")
                     with st.spinner("Creating flashcards…"):
@@ -410,12 +427,12 @@ NOTES:
                             with cols[1]:
                                 if not ss.flash_state[key_q]:
                                     if st.button("Reveal", key=f"reveal_{i}"):
-                                        ss.flash_state[key_q] = True; st.experimental_rerun()
+                                        ss.flash_state[key_q] = True; st.rerun()
                                 else:
                                     if st.button("Hide", key=f"hide_{i}"):
-                                        ss.flash_state[key_q] = False; st.experimental_rerun()
+                                        ss.flash_state[key_q] = False; st.rerun()
 
-                # ---------- QUIZ
+                # ---------- QUIZ ----------
                 elif ss.pending_tool == "quiz":
                     st.subheader("🎯 Quiz")
                     n = adaptive_quiz_count(text)
@@ -451,7 +468,7 @@ NOTES:
                             st.markdown("\n".join(detail))
                             ss.history_quiz.append({"title": ss.last_title, "score": score_str})
 
-                # ---------- MOCK
+                # ---------- MOCK ----------
                 elif ss.pending_tool == "mock":
                     st.subheader("📝 Mock Exam")
                     with st.expander("Select difficulty", expanded=True):
@@ -515,9 +532,9 @@ MOCK + RUBRIC + ANSWER KEY:
 
                 st.markdown('</div>', unsafe_allow_html=True)
 
-            # Clear pending + refresh (no zombie boxes)
+            # close tool and refresh
             ss.pending_tool, ss.process_choice = None, None
-            st.experimental_rerun()
+            st.rerun()
 
 # ---------- CHAT ----------
 with col_chat:
@@ -539,12 +556,12 @@ with col_chat:
                     f"USER: {user_q}"
                 )
             ss.messages.append({"role":"assistant","content":reply})
-            st.experimental_rerun()
+            st.rerun()
 
         cols = st.columns(2)
         with cols[0]:
             if st.button("Close"):
-                ss.chat_open = False; st.experimental_rerun()
+                ss.chat_open = False; st.rerun()
         with cols[1]:
             if st.button("Clear"):
-                ss.messages = []; st.experimental_rerun()
+                ss.messages = []; st.rerun()
